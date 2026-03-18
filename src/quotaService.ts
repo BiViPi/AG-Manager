@@ -51,8 +51,6 @@ export interface UserStatus {
 // [ADDED] New interface for multi-service dashboard
 export interface DashboardData {
     antigravity: UserStatus | null;
-    claude: UserStatus | null;
-    codex: UserStatus | null;
     autoClick?: any;
 }
 
@@ -208,6 +206,24 @@ export class QuotaService {
                     themeColor: m.label.includes('Gemini') ? '#40C4FF' : (m.label.includes('Claude') ? '#FFAB40' : '#69F0AE')
                 };
             });
+
+        const ORDER = [
+            'Gemini 3 Flash',
+            'Gemini 3.1 Pro (High)',
+            'Gemini 3.1 Pro (Low)',
+            'Claude Sonnet 4.6 (Thinking)',
+            'Claude Opus 4.6 (Thinking)',
+            'GPT-OSS 120B (Medium)'
+        ];
+
+        quotas.sort((a, b) => {
+            const indexA = ORDER.indexOf(a.label);
+            const indexB = ORDER.indexOf(b.label);
+            const wA = indexA === -1 ? 999 : indexA;
+            const wB = indexB === -1 ? 999 : indexB;
+            return wA - wB;
+        });
+
         return {
             name: user?.name || 'User',
             email: user?.email || '',
@@ -216,109 +232,9 @@ export class QuotaService {
         };
     }
 
-    // ─── [ADDED] Claude Code Status ───────────────────────────────────────────
-    async fetchClaudeStatus(): Promise<UserStatus | null> {
-        this.log("Fetching Claude Status...");
-        try {
-            // Find claude.exe via VS Code Extension API first
-            let binPath = "";
-            const ext = vscode.extensions.getExtension("anthropic.claude-code");
-            if (ext) {
-                const candidate = ext.extensionPath + "\\resources\\native-binary\\claude.exe";
-                if (fs.existsSync(candidate)) {
-                    binPath = candidate;
-                    this.log(`Claude binary found at: ${binPath}`);
-                }
-            }
-            // Fallback: search in extensions dirs
-            if (!binPath) {
-                const userProfile = process.env.USERPROFILE || "";
-                for (const dir of [`${userProfile}\\.antigravity\\extensions`, `${userProfile}\\.vscode\\extensions`]) {
-                    try {
-                        const cmd = `powershell.exe -NoProfile -Command "Get-ChildItem -Path '${dir}' -Filter 'claude.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName"`;
-                        const { stdout } = await execWithTimeout(cmd, 6000);
-                        if (stdout && stdout.trim()) { binPath = stdout.trim(); break; }
-                    } catch { /* ignore */ }
-                }
-            }
-            if (!binPath) {
-                this.log("Claude binary not found.");
-                return { name: "Claude Code", email: "Extension not found", tier: "N/A", quotas: [], isAuthenticated: false };
-            }
-
-            // Run: claude auth status --json
-            const cmd = `powershell.exe -NoProfile -Command "& '${binPath}' auth status --json"`;
-            const { stdout } = await execWithTimeout(cmd, 6000);
-            const status = JSON.parse(stdout.trim());
-
-            if (!status.loggedIn) {
-                this.log("Claude: Not logged in.");
-                return { name: "Claude Code", email: "Not logged in", tier: "Guest", quotas: [], isAuthenticated: false };
-            }
-
-            this.log(`Claude: Logged in as ${status.email}`);
-            return {
-                name: "Claude Code",
-                email: status.email || "",
-                tier: status.subscriptionType || "Pro",
-                quotas: [
-                    { label: "Session (5hr)", remaining: 0, displayValue: "0%", resetTime: "3h", themeColor: "#FFAB40", style: 'fluid', direction: 'up' },
-                    { label: "Weekly (7day)", remaining: 20, displayValue: "20%", resetTime: "5d", themeColor: "#FF7043", style: 'fluid', direction: 'up' }
-                ],
-                isAuthenticated: true
-            };
-        } catch (e: any) {
-            this.log(`Claude Status error: ${e.message}`);
-            return { name: "Claude Code", email: "Check failed", tier: "Error", quotas: [], isAuthenticated: false, error: e.message };
-        }
-    }
-
-    // ─── [ADDED] Codex Status ────────────────────────────────────────────────
-    async fetchCodexStatus(): Promise<UserStatus | null> {
-        this.log("Fetching Codex Status...");
-        try {
-            // Check if Codex extension is installed in Antigravity
-            const ext = vscode.extensions.getExtension("openai.chatgpt");
-            if (!ext) {
-                this.log("Codex extension not installed.");
-                return { name: "Codex", email: "Extension not installed", tier: "N/A", quotas: [], isAuthenticated: false };
-            }
-            this.log(`Codex extension found at: ${ext.extensionPath}`);
-
-            // Codex Desktop stores its state at ~/.codex/ - use that to detect login
-            const userProfile = process.env.USERPROFILE || "";
-            const stateFile = `${userProfile}\\.codex\\.codex-global-state.json`;
-            const configFile = `${userProfile}\\.codex\\config.toml`;
-
-            if (!fs.existsSync(stateFile) && !fs.existsSync(configFile)) {
-                this.log("Codex state files not found - user not logged in.");
-                return { name: "Codex", email: "Not logged in", tier: "Guest", quotas: [], isAuthenticated: false };
-            }
-
-            this.log("Codex: Logged in (state files found).");
-            return {
-                name: "Codex",
-                email: "Logged In",
-                tier: "ChatGPT",
-                quotas: [
-                    { label: "Remaining", remaining: 30, displayValue: "23", resetTime: "Stable", themeColor: "#69F0AE", style: 'fluid', direction: 'down' },
-                    { label: "Weekly (7day)", remaining: 30, displayValue: "23", resetTime: "Mar 23", themeColor: "#00E676", style: 'fluid', direction: 'down' }
-                ],
-                isAuthenticated: true
-            };
-        } catch (e: any) {
-            this.log(`Codex Status error: ${e.message}`);
-            return { name: "Codex", email: "Check failed", tier: "Error", quotas: [], isAuthenticated: false, error: e.message };
-        }
-    }
-
     // ─── [ADDED] Combined dashboard fetch ────────────────────────────────────
     async fetchDashboard(): Promise<DashboardData> {
-        const [antigravity, claude, codex] = await Promise.all([
-            this.fetchStatus(),
-            this.fetchClaudeStatus(),
-            this.fetchCodexStatus()
-        ]);
-        return { antigravity, claude, codex };
+        const antigravity = await this.fetchStatus();
+        return { antigravity };
     }
 }

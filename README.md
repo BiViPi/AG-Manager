@@ -17,15 +17,15 @@
 ## 🚀 Tính năng nổi bật / Key Features
 
 ### 🇻🇳 Tiếng Việt
-- **Dashboard Đa Dịch Vụ:** Giám sát Gemini, GPT, Claude Code và Codex thực hiện đổi mới theo thời gian thực.
-- **Thanh HP Thông Minh:** Claude và Codex sử dụng thanh tiến trình "HP bar" (fluid) thay vì chia nấc.
-- **Cảnh báo Thông minh:** Tự động thông báo khi Claude dùng quá 80% hoặc các model khác dưới 20%.
+- **Dashboard Trực Quan:** Giám sát Gemini và GPT theo thời gian thực (real-time).
+- **Cảnh Báo Thông Minh:** Tự động thông báo theo từng nhóm (group) thay vì báo spam từng model riêng lẻ.
+- **Automation Suite (Hệ thống tự động):** Cấu hình tự click thông minh, có cơ chế an toàn siêu việt.
 - **Tự động làm mới:** Cấu hình quét dữ liệu ngầm tự động (1-30 phút).
 
 ### 🇺🇸 English
-- **Multi-Service Dashboard:** Real-time monitoring for Gemini, GPT, Claude Code, and Codex.
-- **Fluid HP Bars:** Claude and Codex utilize continuous progress bars instead of segments for better visualization.
-- **Smart Notifications:** Automated alerts when Claude exceeds 80% usage or other models fall below 20%.
+- **Visual Dashboard:** Real-time monitoring for Gemini and GPT.
+- **Smart Notifications:** Group-based alerts to prevent spam when average remaining quota drops below 20%.
+- **Automation Suite:** Intelligent background click automation with robust fail-safe mechanism.
 - **Background Auto-Refresh:** Configurable background updates (1-30 minutes).
 
 ## 🛠 Cấu hình / Settings

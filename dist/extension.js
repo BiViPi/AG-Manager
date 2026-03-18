@@ -35,32 +35,13 @@ __export(extension_exports, {
   setLatestData: () => setLatestData
 });
 module.exports = __toCommonJS(extension_exports);
-var vscode4 = __toESM(require("vscode"));
+var vscode3 = __toESM(require("vscode"));
 
 // src/quotaService.ts
 var http = __toESM(require("http"));
 var import_child_process = require("child_process");
 var import_util = require("util");
-var vscode = __toESM(require("vscode"));
-var fs = __toESM(require("fs"));
 var execAsync = (0, import_util.promisify)(import_child_process.exec);
-async function execWithTimeout(command, timeoutMs = 8e3) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`Command timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    (0, import_child_process.exec)(command, { shell: "powershell.exe" }, (error, stdout, stderr) => {
-      clearTimeout(timer);
-      if (error) {
-        error.stdout = stdout;
-        error.stderr = stderr;
-        reject(error);
-      } else {
-        resolve({ stdout, stderr });
-      }
-    });
-  });
-}
 var API_PATH = "/exa.language_server_pb.LanguageServerService/GetUserStatus";
 var QuotaService = class {
   serverInfo = null;
@@ -218,6 +199,21 @@ var QuotaService = class {
         themeColor: m.label.includes("Gemini") ? "#40C4FF" : m.label.includes("Claude") ? "#FFAB40" : "#69F0AE"
       };
     });
+    const ORDER = [
+      "Gemini 3 Flash",
+      "Gemini 3.1 Pro (High)",
+      "Gemini 3.1 Pro (Low)",
+      "Claude Sonnet 4.6 (Thinking)",
+      "Claude Opus 4.6 (Thinking)",
+      "GPT-OSS 120B (Medium)"
+    ];
+    quotas.sort((a, b) => {
+      const indexA = ORDER.indexOf(a.label);
+      const indexB = ORDER.indexOf(b.label);
+      const wA = indexA === -1 ? 999 : indexA;
+      const wB = indexB === -1 ? 999 : indexB;
+      return wA - wB;
+    });
     return {
       name: user?.name || "User",
       email: user?.email || "",
@@ -225,106 +221,15 @@ var QuotaService = class {
       quotas
     };
   }
-  // ─── [ADDED] Claude Code Status ───────────────────────────────────────────
-  async fetchClaudeStatus() {
-    this.log("Fetching Claude Status...");
-    try {
-      let binPath = "";
-      const ext = vscode.extensions.getExtension("anthropic.claude-code");
-      if (ext) {
-        const candidate = ext.extensionPath + "\\resources\\native-binary\\claude.exe";
-        if (fs.existsSync(candidate)) {
-          binPath = candidate;
-          this.log(`Claude binary found at: ${binPath}`);
-        }
-      }
-      if (!binPath) {
-        const userProfile = process.env.USERPROFILE || "";
-        for (const dir of [`${userProfile}\\.antigravity\\extensions`, `${userProfile}\\.vscode\\extensions`]) {
-          try {
-            const cmd2 = `powershell.exe -NoProfile -Command "Get-ChildItem -Path '${dir}' -Filter 'claude.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName"`;
-            const { stdout: stdout2 } = await execWithTimeout(cmd2, 6e3);
-            if (stdout2 && stdout2.trim()) {
-              binPath = stdout2.trim();
-              break;
-            }
-          } catch {
-          }
-        }
-      }
-      if (!binPath) {
-        this.log("Claude binary not found.");
-        return { name: "Claude Code", email: "Extension not found", tier: "N/A", quotas: [], isAuthenticated: false };
-      }
-      const cmd = `powershell.exe -NoProfile -Command "& '${binPath}' auth status --json"`;
-      const { stdout } = await execWithTimeout(cmd, 6e3);
-      const status = JSON.parse(stdout.trim());
-      if (!status.loggedIn) {
-        this.log("Claude: Not logged in.");
-        return { name: "Claude Code", email: "Not logged in", tier: "Guest", quotas: [], isAuthenticated: false };
-      }
-      this.log(`Claude: Logged in as ${status.email}`);
-      return {
-        name: "Claude Code",
-        email: status.email || "",
-        tier: status.subscriptionType || "Pro",
-        quotas: [
-          { label: "Session (5hr)", remaining: 0, displayValue: "0%", resetTime: "3h", themeColor: "#FFAB40", style: "fluid", direction: "up" },
-          { label: "Weekly (7day)", remaining: 20, displayValue: "20%", resetTime: "5d", themeColor: "#FF7043", style: "fluid", direction: "up" }
-        ],
-        isAuthenticated: true
-      };
-    } catch (e) {
-      this.log(`Claude Status error: ${e.message}`);
-      return { name: "Claude Code", email: "Check failed", tier: "Error", quotas: [], isAuthenticated: false, error: e.message };
-    }
-  }
-  // ─── [ADDED] Codex Status ────────────────────────────────────────────────
-  async fetchCodexStatus() {
-    this.log("Fetching Codex Status...");
-    try {
-      const ext = vscode.extensions.getExtension("openai.chatgpt");
-      if (!ext) {
-        this.log("Codex extension not installed.");
-        return { name: "Codex", email: "Extension not installed", tier: "N/A", quotas: [], isAuthenticated: false };
-      }
-      this.log(`Codex extension found at: ${ext.extensionPath}`);
-      const userProfile = process.env.USERPROFILE || "";
-      const stateFile = `${userProfile}\\.codex\\.codex-global-state.json`;
-      const configFile = `${userProfile}\\.codex\\config.toml`;
-      if (!fs.existsSync(stateFile) && !fs.existsSync(configFile)) {
-        this.log("Codex state files not found - user not logged in.");
-        return { name: "Codex", email: "Not logged in", tier: "Guest", quotas: [], isAuthenticated: false };
-      }
-      this.log("Codex: Logged in (state files found).");
-      return {
-        name: "Codex",
-        email: "Logged In",
-        tier: "ChatGPT",
-        quotas: [
-          { label: "Remaining", remaining: 30, displayValue: "23", resetTime: "Stable", themeColor: "#69F0AE", style: "fluid", direction: "down" },
-          { label: "Weekly (7day)", remaining: 30, displayValue: "23", resetTime: "Mar 23", themeColor: "#00E676", style: "fluid", direction: "down" }
-        ],
-        isAuthenticated: true
-      };
-    } catch (e) {
-      this.log(`Codex Status error: ${e.message}`);
-      return { name: "Codex", email: "Check failed", tier: "Error", quotas: [], isAuthenticated: false, error: e.message };
-    }
-  }
   // ─── [ADDED] Combined dashboard fetch ────────────────────────────────────
   async fetchDashboard() {
-    const [antigravity, claude, codex] = await Promise.all([
-      this.fetchStatus(),
-      this.fetchClaudeStatus(),
-      this.fetchCodexStatus()
-    ]);
-    return { antigravity, claude, codex };
+    const antigravity = await this.fetchStatus();
+    return { antigravity };
   }
 };
 
 // src/sidebarProvider.ts
-var vscode2 = __toESM(require("vscode"));
+var vscode = __toESM(require("vscode"));
 var SidebarProvider = class _SidebarProvider {
   constructor(_extensionUri, _quotaService) {
     this._extensionUri = _extensionUri;
@@ -347,7 +252,7 @@ var SidebarProvider = class _SidebarProvider {
       if (data.type === "onRefresh") {
         this.updateData();
       } else if (data.type === "onAutoClickChange") {
-        vscode2.commands.executeCommand("ag-manager.updateAutoClick", data.config);
+        vscode.commands.executeCommand("ag-manager.updateAutoClick", data.config);
       }
     });
   }
@@ -365,8 +270,8 @@ var SidebarProvider = class _SidebarProvider {
     setLatestData(data);
   }
   _getHtmlForWebview(webview) {
-    const styleUri = webview.asWebviewUri(vscode2.Uri.joinPath(this._extensionUri, "webview-ui", "style.css"));
-    const scriptUri = webview.asWebviewUri(vscode2.Uri.joinPath(this._extensionUri, "webview-ui", "main.js"));
+    const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, "webview-ui", "style.css"));
+    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, "webview-ui", "main.js"));
     return `<!DOCTYPE html>
             <html lang="en">
             <head>
@@ -392,8 +297,8 @@ var SidebarProvider = class _SidebarProvider {
 };
 
 // src/automationService.ts
-var vscode3 = __toESM(require("vscode"));
-var fs2 = __toESM(require("fs"));
+var vscode2 = __toESM(require("vscode"));
+var fs = __toESM(require("fs"));
 var path = __toESM(require("path"));
 var os = __toESM(require("os"));
 var crypto = __toESM(require("crypto"));
@@ -417,7 +322,7 @@ var AutomationService = class _AutomationService {
     this.boot();
   }
   syncState() {
-    const store = vscode3.workspace.getConfiguration("ag-manager.automation");
+    const store = vscode2.workspace.getConfiguration("ag-manager.automation");
     this._isActive = store.get("enabled", true);
     this._rules = store.get("rules", this._rules);
     this._metrics = this._context.globalState.get("automation_metrics", {});
@@ -426,19 +331,17 @@ var AutomationService = class _AutomationService {
   boot() {
     this.launchBridge();
     this.initSystemWatcher();
-    if (!this.verifyInjection()) {
-      this.deployBridgeScript();
-    }
+    this.deployBridgeScript();
   }
   async patchSettings(patch) {
     if (patch.enabled !== void 0) this._isActive = patch.enabled;
     if (patch.rules !== void 0 && Array.isArray(patch.rules)) {
       this._rules = patch.rules;
     }
-    const store = vscode3.workspace.getConfiguration("ag-manager.automation");
+    const store = vscode2.workspace.getConfiguration("ag-manager.automation");
     await Promise.all([
-      store.update("enabled", this._isActive, vscode3.ConfigurationTarget.Global),
-      store.update("rules", this._rules, vscode3.ConfigurationTarget.Global)
+      store.update("enabled", this._isActive, vscode2.ConfigurationTarget.Global),
+      store.update("rules", this._rules, vscode2.ConfigurationTarget.Global)
     ]);
   }
   dumpDiagnostics() {
@@ -545,17 +448,17 @@ var AutomationService = class _AutomationService {
     this._context.subscriptions.push({ dispose: () => clearInterval(job) });
   }
   getTargetFile() {
-    const root = vscode3.env.appRoot;
+    const root = vscode2.env.appRoot;
     const paths = [
       path.join(root, "out/vs/code/electron-sandbox/workbench/workbench.html"),
       path.join(root, "out/vs/code/electron-browser/workbench/workbench.html"),
       path.join(root, "out/vs/workbench/workbench.html")
     ];
-    return paths.find((p) => fs2.existsSync(p)) || null;
+    return paths.find((p) => fs.existsSync(p)) || null;
   }
   verifyInjection() {
     const target = this.getTargetFile();
-    return target ? fs2.readFileSync(target, "utf8").includes(_AutomationService.SCRIPT_TAG_ID) : false;
+    return target ? fs.readFileSync(target, "utf8").includes(_AutomationService.SCRIPT_TAG_ID) : false;
   }
   deployBridgeScript() {
     const target = this.getTargetFile();
@@ -563,12 +466,12 @@ var AutomationService = class _AutomationService {
     try {
       const dir = path.dirname(target);
       const src = path.join(this._context.extensionPath, "src", "automationCore.js");
-      let code = fs2.readFileSync(src, "utf8");
+      let code = fs.readFileSync(src, "utf8");
       code = code.replace("__RULES__", JSON.stringify(this._rules));
       code = code.replace("__STATE__", String(this._isActive));
       const finalScriptPath = path.join(dir, "ag-automation-bridge.js");
       this.writeSafe(finalScriptPath, code);
-      let html = fs2.readFileSync(target, "utf8");
+      let html = fs.readFileSync(target, "utf8");
       if (!html.includes(_AutomationService.SCRIPT_TAG_ID)) {
         const tag = `
 <!-- ${_AutomationService.SCRIPT_TAG_ID}-START -->
@@ -584,25 +487,25 @@ var AutomationService = class _AutomationService {
   }
   writeSafe(p, c) {
     try {
-      fs2.writeFileSync(p, c, "utf8");
+      fs.writeFileSync(p, c, "utf8");
     } catch (e) {
       if (process.platform === "win32") throw new Error("Y\xEAu c\u1EA7u Administrator \u0111\u1EC3 c\xE0i \u0111\u1EB7t t\xEDnh n\u0103ng t\u1EF1 \u0111\u1ED9ng.");
       const tmp = path.join(os.tmpdir(), `ag_tmp_${Date.now()}`);
-      fs2.writeFileSync(tmp, c);
+      fs.writeFileSync(tmp, c);
       const cmd = process.platform === "darwin" ? `osascript -e 'do shell script "cp ${tmp} ${p}" with administrator privileges'` : `pkexec cp ${tmp} ${p}`;
       (0, import_child_process2.execSync)(cmd);
-      fs2.unlinkSync(tmp);
+      fs.unlinkSync(tmp);
     }
   }
   recalculateHashes() {
     try {
-      const pJson = path.join(vscode3.env.appRoot, "product.json");
-      const data = JSON.parse(fs2.readFileSync(pJson, "utf8"));
+      const pJson = path.join(vscode2.env.appRoot, "product.json");
+      const data = JSON.parse(fs.readFileSync(pJson, "utf8"));
       if (!data.checksums) return;
       Object.keys(data.checksums).forEach((k) => {
-        const fullPath = path.join(vscode3.env.appRoot, "out", k.split("/").join(path.sep));
-        if (fs2.existsSync(fullPath)) {
-          const hash = crypto.createHash("sha256").update(fs2.readFileSync(fullPath)).digest("base64").replace(/=+$/, "");
+        const fullPath = path.join(vscode2.env.appRoot, "out", k.split("/").join(path.sep));
+        if (fs.existsSync(fullPath)) {
+          const hash = crypto.createHash("sha256").update(fs.readFileSync(fullPath)).digest("base64").replace(/=+$/, "");
           data.checksums[k] = hash;
         }
       });
@@ -631,20 +534,20 @@ function activate(context) {
   globalSidebarProvider = new SidebarProvider(context.extensionUri, quotaService);
   automationService = new AutomationService(context);
   context.subscriptions.push(
-    vscode4.window.registerWebviewViewProvider("sqm.sidebar", globalSidebarProvider)
+    vscode3.window.registerWebviewViewProvider("sqm.sidebar", globalSidebarProvider)
   );
-  statusBarItem = vscode4.window.createStatusBarItem(vscode4.StatusBarAlignment.Right, 100);
+  statusBarItem = vscode3.window.createStatusBarItem(vscode3.StatusBarAlignment.Right, 100);
   statusBarItem.command = "sqm.sidebar.focus";
   statusBarItem.text = "$(dashboard) AG Manager";
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
   context.subscriptions.push(
-    vscode4.commands.registerCommand("sqm.refresh", async () => {
+    vscode3.commands.registerCommand("sqm.refresh", async () => {
       if (globalSidebarProvider) await globalSidebarProvider.updateData();
     })
   );
   context.subscriptions.push(
-    vscode4.commands.registerCommand("ag-manager.updateAutoClick", async (config) => {
+    vscode3.commands.registerCommand("ag-manager.updateAutoClick", async (config) => {
       if (automationService) {
         await automationService.patchSettings(config);
         setLatestData(latestQuotaData);
@@ -655,7 +558,7 @@ function activate(context) {
     if (globalSidebarProvider) globalSidebarProvider.updateData();
   }, 2e3);
   startAutoRefresh();
-  context.subscriptions.push(vscode4.workspace.onDidChangeConfiguration((e) => {
+  context.subscriptions.push(vscode3.workspace.onDidChangeConfiguration((e) => {
     if (e.affectsConfiguration("sqm.refreshInterval")) {
       startAutoRefresh();
     }
@@ -731,12 +634,6 @@ function buildTooltipSVG(data) {
       renderGroupSection(group.title, members);
     });
   }
-  if (data.claude?.quotas) {
-    renderGroupSection("CLAUDE CODE", data.claude.quotas);
-  }
-  if (data.codex?.quotas) {
-    renderGroupSection("CODEX", data.codex.quotas);
-  }
   const totalHeight = currentY + 5;
   return `
     <svg width="${width}" height="${totalHeight}" viewBox="0 0 ${width} ${totalHeight}" xmlns="http://www.w3.org/2000/svg">
@@ -757,20 +654,10 @@ function refreshStatusBar() {
       return `${dot} ${short} ${Math.round(avg)}%`;
     }).filter((t) => t !== "").join("  |  ");
   }
-  if (latestQuotaData.claude?.isAuthenticated && latestQuotaData.claude.quotas?.length > 0) {
-    const cQuota = latestQuotaData.claude.quotas[0];
-    const color = getQuotaColor(cQuota.remaining, "up");
-    groupsText += `  Claude ${color.dot}`;
-  }
-  if (latestQuotaData.codex?.isAuthenticated && latestQuotaData.codex.quotas?.length > 0) {
-    const cxQuota = latestQuotaData.codex.quotas[0];
-    const color = getQuotaColor(cxQuota.remaining, "down");
-    groupsText += `  Codex ${color.dot}`;
-  }
   statusBarItem.text = `$(dashboard)  ${groupsText || "AG Manager"}`;
   const svg = buildTooltipSVG(latestQuotaData);
   const base64 = Buffer.from(svg).toString("base64");
-  const tooltip = new vscode4.MarkdownString();
+  const tooltip = new vscode3.MarkdownString();
   tooltip.appendMarkdown(`![Quota Info](data:image/svg+xml;base64,${base64})
 
 `);
@@ -790,48 +677,31 @@ function setLatestData(data) {
 }
 function startAutoRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
-  const config = vscode4.workspace.getConfiguration("sqm");
+  const config = vscode3.workspace.getConfiguration("sqm");
   const intervalMins = config.get("refreshInterval") || 5;
   refreshTimer = setInterval(() => {
     if (globalSidebarProvider) globalSidebarProvider.updateData();
   }, intervalMins * 60 * 1e3);
 }
 function checkNotifications(data) {
-  const config = vscode4.workspace.getConfiguration("sqm");
+  const config = vscode3.workspace.getConfiguration("sqm");
   if (!config.get("enableNotifications")) return;
-  const checkQuota = (serviceName, quotas) => {
-    if (!quotas) return;
-    quotas.forEach((q) => {
-      const modelKey = `${serviceName}-${q.label}`;
-      if (notifiedModels.has(modelKey)) return;
-      const isClaude = serviceName === "Claude";
-      const pct = Math.round(q.remaining);
-      let shouldNotify = false;
-      let message = "";
-      if (isClaude) {
-        if (pct >= 80) {
-          shouldNotify = true;
-          message = `Claude [${q.label}] usage is high (${pct}%).`;
+  if (!data.antigravity?.quotas) return;
+  GROUPS.forEach((group) => {
+    const members = data.antigravity.quotas.filter((q) => group.models.includes(q.label));
+    if (members.length === 0) return;
+    const avg = members.reduce((acc, curr) => acc + curr.remaining, 0) / members.length;
+    const groupKey = `group-${group.id}`;
+    if (notifiedModels.has(groupKey)) return;
+    if (avg <= 20) {
+      vscode3.window.showWarningMessage(`AG Manager: [${group.title}] quota is low (${Math.round(avg)}%).`, "Dashboard").then((selection) => {
+        if (selection === "Dashboard") {
+          vscode3.commands.executeCommand("sqm.sidebar.focus");
         }
-      } else {
-        if (pct <= 20) {
-          shouldNotify = true;
-          message = `${serviceName} [${q.label}] quota is low (${pct}% remaining).`;
-        }
-      }
-      if (shouldNotify) {
-        vscode4.window.showWarningMessage(message, "Dashboard").then((selection) => {
-          if (selection === "Dashboard") {
-            vscode4.commands.executeCommand("sqm.sidebar.focus");
-          }
-        });
-        notifiedModels.add(modelKey);
-      }
-    });
-  };
-  if (data.antigravity?.quotas) checkQuota("Antigravity", data.antigravity.quotas);
-  if (data.claude?.quotas) checkQuota("Claude", data.claude.quotas);
-  if (data.codex?.quotas) checkQuota("Codex", data.codex.quotas);
+      });
+      notifiedModels.add(groupKey);
+    }
+  });
 }
 function deactivate() {
 }

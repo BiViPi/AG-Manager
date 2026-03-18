@@ -52,12 +52,6 @@ function renderDashboard(data) {
     if (ag) {
         html += renderServiceGroup('ANTIGRAVITY', ag);
     }
-    if (data.claude) {
-        html += renderServiceGroup('CLAUDE CODE', data.claude);
-    }
-    if (data.codex) {
-        html += renderServiceGroup('CODEX', data.codex);
-    }
 
     document.getElementById('quota-list').innerHTML = html;
 

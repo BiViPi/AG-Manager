@@ -164,13 +164,7 @@ function buildTooltipSVG(data: any): string {
         });
     }
 
-    if (data.claude?.quotas) {
-        renderGroupSection("CLAUDE CODE", data.claude.quotas);
-    }
 
-    if (data.codex?.quotas) {
-        renderGroupSection("CODEX", data.codex.quotas);
-    }
 
     const totalHeight = currentY + 5;
 
@@ -199,19 +193,7 @@ function refreshStatusBar() {
         }).filter(t => t !== '').join('  |  ');
     }
 
-    // 2. Claude (if authenticated)
-    if (latestQuotaData.claude?.isAuthenticated && latestQuotaData.claude.quotas?.length > 0) {
-        const cQuota = latestQuotaData.claude.quotas[0];
-        const color = getQuotaColor(cQuota.remaining, 'up');
-        groupsText += `  Claude ${color.dot}`;
-    }
 
-    // 3. Codex (if authenticated)
-    if (latestQuotaData.codex?.isAuthenticated && latestQuotaData.codex.quotas?.length > 0) {
-        const cxQuota = latestQuotaData.codex.quotas[0];
-        const color = getQuotaColor(cxQuota.remaining, 'down');
-        groupsText += `  Codex ${color.dot}`;
-    }
 
     statusBarItem.text = `$(dashboard)  ${groupsText || 'AG Manager'}`;
 
@@ -253,46 +235,27 @@ function checkNotifications(data: any) {
     const config = vscode.workspace.getConfiguration("sqm");
     if (!config.get<boolean>("enableNotifications")) return;
 
-    const checkQuota = (serviceName: string, quotas: any[]) => {
-        if (!quotas) return;
-        quotas.forEach(q => {
-            const modelKey = `${serviceName}-${q.label}`;
-            if (notifiedModels.has(modelKey)) return;
+    if (!data.antigravity?.quotas) return;
 
-            const isClaude = serviceName === 'Claude';
-            const pct = Math.round(q.remaining);
+    GROUPS.forEach(group => {
+        const members = data.antigravity.quotas.filter((q: any) => group.models.includes(q.label));
+        if (members.length === 0) return;
 
-            let shouldNotify = false;
-            let message = "";
+        // Group avg remaining
+        const avg = members.reduce((acc: number, curr: any) => acc + curr.remaining, 0) / members.length;
 
-            if (isClaude) {
-                // Claude counts UP (usage)
-                if (pct >= 80) {
-                    shouldNotify = true;
-                    message = `Claude [${q.label}] usage is high (${pct}%).`;
+        const groupKey = `group-${group.id}`;
+        if (notifiedModels.has(groupKey)) return;
+
+        if (avg <= 20) {
+            vscode.window.showWarningMessage(`AG Manager: [${group.title}] quota is low (${Math.round(avg)}%).`, "Dashboard").then(selection => {
+                if (selection === "Dashboard") {
+                    vscode.commands.executeCommand("sqm.sidebar.focus");
                 }
-            } else {
-                // Antigravity/Codex count DOWN (remaining)
-                if (pct <= 20) {
-                    shouldNotify = true;
-                    message = `${serviceName} [${q.label}] quota is low (${pct}% remaining).`;
-                }
-            }
-
-            if (shouldNotify) {
-                vscode.window.showWarningMessage(message, "Dashboard").then(selection => {
-                    if (selection === "Dashboard") {
-                        vscode.commands.executeCommand("sqm.sidebar.focus");
-                    }
-                });
-                notifiedModels.add(modelKey);
-            }
-        });
-    };
-
-    if (data.antigravity?.quotas) checkQuota("Antigravity", data.antigravity.quotas);
-    if (data.claude?.quotas) checkQuota("Claude", data.claude.quotas);
-    if (data.codex?.quotas) checkQuota("Codex", data.codex.quotas);
+            });
+            notifiedModels.add(groupKey);
+        }
+    });
 }
 
 export function deactivate() { }

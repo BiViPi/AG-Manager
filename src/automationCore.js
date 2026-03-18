@@ -8,7 +8,8 @@
         rules: __RULES__,
         active: __STATE__,
         port: 48787,
-        scanInterval: 1000
+        scanInterval: 1000,
+        failCount: 0
     };
 
     const state = {
@@ -48,19 +49,36 @@
 
     // 1. Discovery & Heartbeat
     async function syncWithHost() {
-        try {
-            const query = Object.keys(state.pendingStats).length > 0
-                ? `?delta=${encodeURIComponent(JSON.stringify(state.pendingStats))}`
-                : '';
+        // Try multiple ports in case the backend had to increment due to EADDRINUSE
+        for (let p = 48787; p <= 48795; p++) {
+            try {
+                const query = Object.keys(state.pendingStats).length > 0
+                    ? `?delta=${encodeURIComponent(JSON.stringify(state.pendingStats))}`
+                    : '';
 
-            const res = await fetch(`http://127.0.0.1:${config.port}/system/heartbeat${query}`);
-            const remote = await res.json();
+                const res = await fetch(`http://127.0.0.1:${p}/system/heartbeat${query}`);
+                if (res.ok) {
+                    const remote = await res.json();
+                    config.active = remote.power;
+                    config.rules = remote.rules;
+                    config.port = p; // Lock to the successful port
+                    config.failCount = 0; // Reset fail counter
+                    state.pendingStats = {}; // Clear after sync
+                    // Heartbeat success, break out of the loop
+                    return;
+                }
+            } catch (e) {
+                // Ignore and try next port
+            }
+        }
 
-            config.active = remote.power;
-            config.rules = remote.rules;
-            state.pendingStats = {}; // Clear after sync
-        } catch (e) {
-            // Re-discovery logic if port changes or server down
+        config.failCount++;
+        console.warn(`[AG-Automation] Heartbeat failed (count: ${config.failCount}). Retaining current config.`);
+
+        // Safety switch: Disable automation if backend is completely unresponsive
+        if (config.failCount > 3) {
+            config.active = false;
+            console.warn('[AG-Automation] Backend unreachable. Automation paused for safety.');
         }
     }
 

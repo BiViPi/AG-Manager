@@ -41,9 +41,8 @@ export class AutomationService {
     private boot() {
         this.launchBridge();
         this.initSystemWatcher();
-        if (!this.verifyInjection()) {
-            this.deployBridgeScript();
-        }
+        // Always deploy to update JS file (HTML injection checks SCRIPT_TAG_ID internally)
+        this.deployBridgeScript();
     }
 
     public async patchSettings(patch: any) {

@@ -1,5 +1,19 @@
 # Changelog - AG Manager
 
+## [1.2.2] - 2026-03-18
+
+### 🇻🇳 Tiếng Việt
+- **Gỡ bỏ Claude Code & Codex:** Vì không thể giám sát chính xác theo thời gian thực (độ chính xác 0%).
+- **Cảnh báo Group:** Kích hoạt cảnh báo trung bình theo từng nhóm thay vì từng model, giảm phiền toái spam Notification.
+- **Sắp xếp Cố định:** Cố định vị trí các model trong Dashboard không bị xáo trộn.
+- **Vá lỗi Automation:** Sửa lỗi script tự động bị kẹt với tính năng tự dò port server. Bổ sung bộ đếm số lần fail (Fallback Safety Switch) để tắt an toàn.
+
+### 🇺🇸 English
+- **Removed Claude Code & Codex:** Removed due to lack of reliable real-time tracking support (0% accuracy).
+- **Group Notifications:** Switched warnings from individual models to group metrics to reduce alert spam.
+- **Fixed Model Ordering:** Fixed positional rendering grid for all models to stop random shuffling.
+- **Automation Fixes:** Implemented dynamic port-scanning heartbeat and a safety fail-switch for unresponsive behavior in the Automation Suite.
+
 ## [1.2.0] - 2026-03-17
 
 ### 🇻🇳 Tiếng Việt
