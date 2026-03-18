@@ -12,7 +12,7 @@
 
 | Dashboard | Status Bar Popup |
 |-----------|------------------|
-| ![Dashboard](https://raw.githubusercontent.com/BiViPi/AG-Manager/main/logo/dashboard.png) | ![Popup](https://raw.githubusercontent.com/BiViPi/AG-Manager/main/logo/popup.png) |
+| ![Dashboard](./logo/dashboard.png) | ![Popup](./logo/popup.png) |
 
 ## 🚀 Tính năng nổi bật / Key Features
 
