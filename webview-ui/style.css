@@ -98,10 +98,21 @@ button#refresh-btn:hover {
     flex-direction: column;
     align-items: center;
     gap: 2px;
-    padding: 6px 2px;
-    background: var(--vscode-editor-background);
-    border-radius: 8px;
-    border: 1px solid var(--vscode-panel-border, #333);
+    padding: 10px 4px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.01) 100%);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.gauge-item:hover {
+    transform: translateY(-2px);
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3), 0 0 10px rgba(64, 196, 255, 0.1);
+    border-color: rgba(64, 196, 255, 0.3);
 }
 
 .gauge-svg {
@@ -132,13 +143,18 @@ button#refresh-btn:hover {
 
 .gauge-label {
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 800;
     text-align: center;
-    color: var(--vscode-foreground);
-    opacity: 0.85;
-    line-height: 1.2;
+    color: #e0e0e0;
+    background: linear-gradient(120deg, #b388ff 30%, #ce93d8 100%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    opacity: 1;
+    line-height: 1.25;
     word-break: break-word;
     max-width: 80px;
+    letter-spacing: 0.02em;
 }
 
 .gauge-time {
@@ -214,17 +230,19 @@ button#refresh-btn:hover {
 }
 
 .automation-card {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 12px;
-    padding: 12px;
+    position: relative;
+    padding: 14px 10px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.01) 100%);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    gap: 6px;
     cursor: pointer;
-    position: relative;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     overflow: hidden;
 }
 

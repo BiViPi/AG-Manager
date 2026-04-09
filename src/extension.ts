@@ -102,7 +102,7 @@ function buildTooltipSVG(data: any): string {
 
         // Group Header (High-tech style)
         contentHtml += `
-            <text x="${padding}" y="${currentY + 12}" font-family="monospace, sans-serif" font-size="10" font-weight="900" fill="#40c4ff" style="letter-spacing: 1px;">${title}</text>
+            <text x="${padding}" y="${currentY + 12}" font-family="monospace, sans-serif" font-size="10" font-weight="900" fill="#40c4ff" style="letter-spacing: 1px; filter: drop-shadow(0 0 2px rgba(64,196,255,0.5));">${title}</text>
         `;
         currentY += groupHeaderHeight + 2;
 
@@ -111,15 +111,15 @@ function buildTooltipSVG(data: any): string {
             const color = getQuotaColor(pct, q.direction || 'down');
             const time = formatTime(q.resetTime);
 
-            // Row Highlight
-            contentHtml += `<rect x="${padding - 5}" y="${currentY}" width="${width - padding * 2 + 10}" height="${rowHeight - 4}" rx="6" fill="#FFFFFF" fill-opacity="0.03"/>`;
+            // Row Highlight (Glow effect)
+            contentHtml += `<rect x="${padding - 5}" y="${currentY}" width="${width - padding * 2 + 10}" height="${rowHeight - 4}" rx="8" fill="url(#row-grad)" fill-opacity="0.6"/>`;
 
             // Dot
             contentHtml += `<circle cx="${padding + 8}" cy="${currentY + 13}" r="3.5" fill="${color.hex}"/>`;
 
-            // Model Name
+            // Model Name (Vibrant Gradient Text)
             const cleanName = q.label.replace(' (Thinking)', '').replace(' (Medium)', '');
-            contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="sans-serif" font-size="11" font-weight="600" fill="#9CA3AF">${cleanName}</text>`;
+            contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="sans-serif" font-size="11" font-weight="800" fill="url(#name-grad)">${cleanName}</text>`;
 
             // Progress Bar (Fluid HP style or Segmented)
             const barX = 180;
@@ -203,7 +203,26 @@ function buildTooltipSVG(data: any): string {
 
     return `
     <svg width="${width}" height="${totalHeight}" viewBox="0 0 ${width} ${totalHeight}" xmlns="http://www.w3.org/2000/svg">
-        <rect width="${width}" height="${totalHeight}" rx="10" fill="#1a1c23" stroke="#2d333d" stroke-width="1"/>
+        <defs>
+            <linearGradient id="bg-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" style="stop-color:#21252e;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#161920;stop-opacity:1" />
+            </linearGradient>
+            <linearGradient id="name-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" style="stop-color:#b388ff;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#ce93d8;stop-opacity:1" />
+            </linearGradient>
+            <linearGradient id="row-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" style="stop-color:#ffffff;stop-opacity:0.04" />
+                <stop offset="100%" style="stop-color:#ffffff;stop-opacity:0.01" />
+            </linearGradient>
+        </defs>
+        <!-- Background Card -->
+        <rect width="${width}" height="${totalHeight}" rx="12" fill="url(#bg-grad)" stroke="#2d333d" stroke-width="1.5"/>
+        <!-- Liquid Glass Highlight -->
+        <rect x="1" y="1" width="${width - 2}" height="12" rx="6" fill="#ffffff" fill-opacity="0.03"/>
+        <path d="M 12 1 L ${width - 12} 1" stroke="white" stroke-width="0.5" stroke-opacity="0.15"/>
+        
         ${contentHtml}
     </svg>`;
 }

@@ -168,7 +168,6 @@ function renderServiceGroup(title, status) {
     return `
         <div class="service-group">
             <div class="group-header">${title}</div>
-            <div class="service-info">${infoLine}</div>
             ${gaugesHtml}
         </div>
     `;
