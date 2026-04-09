@@ -1,12 +1,12 @@
-# AG Manager (Antigravity & AI Quota Manager)
+# Antigravity-Codex Monitor
 
 [English Below]
 
-**AG Manager** là tiện ích tối ưu dành cho người dùng **Antigravity IDE**, giúp bạn giám sát và quản lý hạn mức sử dụng (quota) của tất cả các dịch vụ AI hàng đầu ngay trong tầm tay.
+**Antigravity-Codex Monitor** (trước đây là AG Manager) là tiện ích tối ưu dành cho người dùng **Antigravity IDE**, giúp bạn giám sát và quản lý hạn mức sử dụng (quota) AI cực kỳ chính xác.
 
 ---
 
-**AG Manager** is the ultimate extension for **Antigravity IDE** users, helping you monitor and manage AI model quotas for all leading services at your fingertips.
+**Antigravity-Codex Monitor** (formerly AG Manager) is the ultimate extension for **Antigravity IDE** users, providing high-precision monitoring of AI model quotas.
 
 ## 📸 Previews
 
@@ -17,15 +17,17 @@
 ## 🚀 Tính năng nổi bật / Key Features
 
 ### 🇻🇳 Tiếng Việt
-- **Dashboard Trực Quan:** Giám sát Gemini và GPT theo thời gian thực (real-time).
+- **Codex Quota Monitoring:** Tích hợp radar giám sát OpenAI Codex (ChatGPT) chính xác 99% thông qua việc bóc tách session file thực tế.
+- **Dashboard Liquid Glass:** Giao diện Dashboard và Tooltip phong cách kính mờ (Glassmorphism), hiển thị Gemini, GPT và Codex trực quan.
 - **Cảnh Báo Thông Minh:** Tự động thông báo theo từng nhóm (group) thay vì báo spam từng model riêng lẻ.
 - **Automation Suite (Hệ thống tự động):** Cấu hình tự click thông minh, có cơ chế an toàn siêu việt.
 - **Tự động làm mới:** Cấu hình quét dữ liệu ngầm tự động (1-30 phút).
 
 ### 🇺🇸 English
-- **Visual Dashboard:** Real-time monitoring for Gemini and GPT.
-- **Smart Notifications:** Group-based alerts to prevent spam when average remaining quota drops below 20%.
-- **Automation Suite:** Intelligent background click automation with robust fail-safe mechanism.
+- **Codex Quota Monitoring:** Re-integrated OpenAI Codex (ChatGPT) tracking with 99% precision using real-time session file parsing.
+- **Liquid Glass Dashboard:** Beautiful Glassmorphism UI for both Dashboard and Tooltips, monitoring Gemini, GPT, and Codex.
+- **Smart Notifications:** Group-based alerts to prevent spam when average remaining quota drops below a safe threshold.
+- **Automation Suite:** Intelligent background click automation with a robust fail-safe mechanism.
 - **Background Auto-Refresh:** Configurable background updates (1-30 minutes).
 
 ## 🛠 Cấu hình / Settings

@@ -1,6 +1,6 @@
 {
     "name": "ag-manager",
-    "displayName": "AG Manager",
+    "displayName": "Antigravity-Codex Monitor",
     "description": "Monitor AI model quotas and manage automation features inside Antigravity IDE.",
     "version": "1.3.0",
     "publisher": "BiViPi",
@@ -28,7 +28,7 @@
             "activitybar": [
                 {
                     "id": "sqm-explorer",
-                    "title": "AG Manager",
+                    "title": "Antigravity-Codex Monitor",
                     "icon": "$(dashboard)"
                 }
             ]

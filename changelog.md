@@ -1,4 +1,4 @@
-# Changelog - AG Manager
+# Changelog - Antigravity-Codex Monitor
 
 ## [1.3.0] - 2026-04-09
 
