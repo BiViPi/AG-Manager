@@ -53,6 +53,58 @@ function renderDashboard(data) {
         html += renderServiceGroup('ANTIGRAVITY', ag);
     }
 
+    if (data.codex) {
+        const codexQuotas = [];
+        if (data.codex.primary && !data.codex.primary.outdated) {
+            const p = data.codex.primary;
+            const remaining = 100 - p.used_percent;
+            codexQuotas.push({
+                remaining,
+                direction: 'down',
+                resetTime: new Date(p.reset_time).toLocaleString(),
+                label: '5-Hour Session',
+                style: 'fluid',
+                themeColor: '#10b981', // Force Green for Codex
+                displayValue: `${Math.round(remaining)}%`
+            });
+        }
+        if (data.codex.secondary && !data.codex.secondary.outdated) {
+            const s = data.codex.secondary;
+            const remaining = 100 - s.used_percent;
+            codexQuotas.push({
+                remaining,
+                direction: 'down',
+                resetTime: new Date(s.reset_time).toLocaleString(),
+                label: 'Weekly Limit',
+                style: 'fluid',
+                themeColor: '#10b981', // Force Green for Codex
+                displayValue: `${Math.round(remaining)}%`
+            });
+        }
+        if (codexQuotas.length > 0) {
+            html += renderServiceGroup('CODEX (ChatGPT)', {
+                tier: 'Live Usage Monitor',
+                email: 'codex-ratelimit',
+                quotas: codexQuotas,
+                isAuthenticated: true
+            });
+        }
+
+        // Token Usage Summary
+        const t = data.codex.total_usage;
+        const l = data.codex.last_usage;
+        const fk = n => Math.round((n || 0) / 1000).toLocaleString() + 'K';
+        html += `
+        <div class="service-group" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.05);">
+            <div class="group-header">TOKEN USAGE FOR CODEX</div>
+            <div style="font-family: monospace; font-size: 11px; color: #9CA3AF; margin-top: 8px;">
+                <div style="margin-bottom: 4px;"><strong>Total:</strong> in ${fk(t.input_tokens)}, cache ${fk(t.cached_input_tokens)}, out ${fk(t.output_tokens)}, reasoning ${fk(t.reasoning_output_tokens)}</div>
+                <div><strong>Last:</strong> in ${fk(l.input_tokens)}, cache ${fk(l.cached_input_tokens)}, out ${fk(l.output_tokens)}, reasoning ${fk(l.reasoning_output_tokens)}</div>
+            </div>
+        </div>
+        `;
+    }
+
     document.getElementById('quota-list').innerHTML = html;
 
     if (data.antigravity && data.antigravity.autoClick) {
@@ -60,6 +112,17 @@ function renderDashboard(data) {
     }
     if (data.autoClick) {
         renderAutoClick(data.autoClick);
+    }
+}
+
+function getHexColor(pct, direction) {
+    if (direction === 'up') {
+        if (pct < 80) return '#FFAB40';
+        return '#ef4444';
+    } else {
+        if (pct > 50) return '#10b981';
+        if (pct > 20) return '#f59e0b';
+        return '#ef4444';
     }
 }
 
@@ -188,11 +251,20 @@ function createGauge(quota) {
     const centerText = quota.displayValue !== undefined ? quota.displayValue : `${pct}%`;
 
     // [MODIFIED] Directionality: Up (Clockwise) or Down (Counter-clockwise)
-    // Default is down (counter-clockwise) for Antigravity & Codex
+    // To deplete from top (12 o'clock) counter-clockwise:
+    // rotate(90 40 40) changes start to 6 o'clock clockwise.
+    // scale(-1, 1) translate(-80, 0) flips it to start at 6 o'clock counter-clockwise.
+    // Wait, to start at 12 o'clock counter-clockwise, rotate(-90) starts at 12 o'clock clockwise.
+    // Flapping X axis makes it counter-clockwise!
     const isDown = quota.direction === 'down' || quota.direction === undefined;
     const transform = isDown
-        ? "rotate(-90 40 40) scale(-1, 1) translate(-80, 0)" // Counter-clockwise mirror
-        : "rotate(-90 40 40)";                             // Clockwise
+        ? "rotate(-90 40 40) scale(1, -1) translate(0, -80)" // Flip Y axis: starts at 12 o'clock, counter-clockwise!
+        : "rotate(-90 40 40)";                             // Clockwise from 12 o'clock
+
+    // Calculate precise dash offset to ensure the empty space represents the depleted amount
+    // If it's a depleting HP bar, filled = pct, empty = 100-pct
+    // We want the bar to be filled exactly `pct`. The stroke length is `filled`.
+    // The dash array `filled C` is correct.
 
     return `
         <div class="gauge-item">

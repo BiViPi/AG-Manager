@@ -1,5 +1,21 @@
 # Changelog - AG Manager
 
+## [1.3.0] - 2026-04-09
+
+### 🇻🇳 Tiếng Việt
+- **Codex Quota Monitoring:** Tích hợp lại radar giám sát OpenAI Codex (ChatGPT) với logic bóc tách file session độ chính xác cực cao (99%).
+- **Thanh HP (Depleting):** Hiển thị Quota 5-giờ và giới hạn Tuần dưới dạng thanh HP (giảm dần từ 100% về 0%), màu xanh lá cây mát mắt.
+- **Status Bar 2.0:** Hiển thị trực tiếp phần trăm quota Codex (C5H, CW) ngay trên thanh trạng thái của VS Code.
+- **Tinh chỉnh Tooltip:** Loại bỏ thông tin thừa, thêm link làm mới (Refresh) nhanh ngay trong popup status bar.
+- **Dashboard Polish:** Nổi bật các tiêu đề nhóm (headers) và giao diện trực quan hơn cho thông tin Token Usage.
+
+### 🇺🇸 English
+- **Codex Quota Monitoring:** Re-integrated OpenAI Codex (ChatGPT) monitoring with high-precision (99%) session file parsing.
+- **HP Bars (Depleting):** Visualize 5-hour and Weekly limits using HP-style bars (depleting from 100% to 0%), styled in Green.
+- **Enhanced Status Bar:** Direct display of Codex quota percentages (C5H, CW) on the VS Code status bar.
+- **Tooltip Refinements:** Streamlined tooltip SVG, removed redundant token info, and added a quick Refresh command.
+- **Dashboard Polish:** High-visibility group headers and improved layout for Token Usage metrics.
+
 ## [1.2.2] - 2026-03-18
 
 ### 🇻🇳 Tiếng Việt

@@ -165,10 +165,13 @@ button#refresh-btn:hover {
 .group-header {
     font-size: 10px;
     font-weight: 800;
-    color: #4B5563;
+    color: #FFFFFF;
+    background: rgba(255, 255, 255, 0.08);
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
     letter-spacing: 0.1em;
-    margin-bottom: 6px;
-    padding-left: 2px;
+    margin-bottom: 8px;
     text-transform: uppercase;
 }
 

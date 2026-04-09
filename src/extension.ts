@@ -164,7 +164,38 @@ function buildTooltipSVG(data: any): string {
         });
     }
 
-
+    if (data.codex) {
+        const codexQuotas = [];
+        if (data.codex.primary && !data.codex.primary.outdated) {
+            const p = data.codex.primary;
+            const remaining = 100 - p.used_percent;
+            codexQuotas.push({
+                remaining,
+                direction: 'down',
+                resetTime: p.reset_time.toLocaleString(),
+                label: '5-Hour Session',
+                style: 'fluid',
+                themeColor: '#10b981', // Force Green for Codex
+                displayValue: `${Math.round(remaining)}%`
+            });
+        }
+        if (data.codex.secondary && !data.codex.secondary.outdated) {
+            const s = data.codex.secondary;
+            const remaining = 100 - s.used_percent;
+            codexQuotas.push({
+                remaining,
+                direction: 'down',
+                resetTime: s.reset_time.toLocaleString(),
+                label: 'Weekly Limit',
+                style: 'fluid',
+                themeColor: '#10b981', // Force Green for Codex
+                displayValue: `${Math.round(remaining)}%`
+            });
+        }
+        if (codexQuotas.length > 0) {
+            renderGroupSection('CODEX (ChatGPT)', codexQuotas);
+        }
+    }
 
     const totalHeight = currentY + 5;
 
@@ -193,7 +224,25 @@ function refreshStatusBar() {
         }).filter(t => t !== '').join('  |  ');
     }
 
-
+    // 2. Codex Quota
+    if (latestQuotaData.codex) {
+        const codexParts = [];
+        if (latestQuotaData.codex.primary && !latestQuotaData.codex.primary.outdated) {
+            const p = latestQuotaData.codex.primary;
+            const remaining = Math.round(100 - p.used_percent);
+            const dot = remaining > 50 ? '🟢' : (remaining > 20 ? '🟡' : '🔴');
+            codexParts.push(`${dot} C5H ${remaining}%`);
+        }
+        if (latestQuotaData.codex.secondary && !latestQuotaData.codex.secondary.outdated) {
+            const s = latestQuotaData.codex.secondary;
+            const remaining = Math.round(100 - s.used_percent);
+            const dot = remaining > 50 ? '🟢' : (remaining > 20 ? '🟡' : '🔴');
+            codexParts.push(`${dot} CW ${remaining}%`);
+        }
+        if (codexParts.length > 0) {
+            groupsText += (groupsText ? '  |  ' : '') + codexParts.join('  |  ');
+        }
+    }
 
     statusBarItem.text = `$(dashboard)  ${groupsText || 'AG Manager'}`;
 
@@ -204,7 +253,8 @@ function refreshStatusBar() {
     const tooltip = new vscode.MarkdownString();
     tooltip.appendMarkdown(`![Quota Info](data:image/svg+xml;base64,${base64})\n\n`);
     const name = latestQuotaData.antigravity?.name || "User";
-    tooltip.appendMarkdown(`&nbsp;&nbsp;&nbsp;&nbsp;**${name}** · [Dashboard](command:sqm.sidebar.focus)`);
+    tooltip.appendMarkdown(`&nbsp;&nbsp;&nbsp;&nbsp;**${name}** · [Dashboard](command:sqm.sidebar.focus) · [Refresh](command:sqm.refresh)`);
+
     tooltip.isTrusted = true;
     statusBarItem.tooltip = tooltip;
 }

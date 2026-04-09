@@ -3,6 +3,9 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { glob } from 'glob';
 
 const execAsync = promisify(exec);
 
@@ -51,7 +54,269 @@ export interface UserStatus {
 // [ADDED] New interface for multi-service dashboard
 export interface DashboardData {
     antigravity: UserStatus | null;
+    codex?: RateLimitData | null;
     autoClick?: any;
+}
+
+// ─── [ADDED] Codex Rate Limit Types ───────────────────────────────────────
+
+export interface TokenUsage {
+    input_tokens: number;
+    cached_input_tokens: number;
+    output_tokens: number;
+    reasoning_output_tokens: number;
+    total_tokens: number;
+}
+
+export interface RateLimit {
+    used_percent: number;
+    window_minutes: number;
+    resets_in_seconds?: number;
+    resets_at?: number;
+}
+
+export interface TokenCountPayload {
+    type: 'token_count';
+    info: {
+        total_token_usage: TokenUsage | null;
+        last_token_usage: TokenUsage | null;
+    } | null;
+    rate_limits?: {
+        primary?: RateLimit;    // 5-hour limit
+        secondary?: RateLimit;  // Weekly limit
+    };
+}
+
+export interface EventRecord {
+    type: 'event_msg';
+    timestamp: string;
+    payload: TokenCountPayload;
+}
+
+export interface RateLimitData {
+    file_path: string;
+    record_timestamp: Date;
+    current_time: Date;
+    total_usage: TokenUsage;
+    last_usage: TokenUsage;
+    primary?: {
+        used_percent: number;
+        time_percent: number;
+        reset_time: Date;
+        outdated: boolean;
+        window_minutes: number;
+    };
+    secondary?: {
+        used_percent: number;
+        time_percent: number;
+        reset_time: Date;
+        outdated: boolean;
+        window_minutes: number;
+    };
+}
+
+// ─── [ADDED] Codex Parsing Logic ──────────────────────────────────────────
+
+function getCodexSessionBasePath(customPath?: string): string {
+    if (customPath) {
+        return path.resolve(customPath.replace('~', os.homedir()));
+    }
+    return path.join(os.homedir(), '.codex', 'sessions');
+}
+
+function calculateResetTime(recordTimestamp: Date, rateLimit: RateLimit): { resetTime: Date; isOutdated: boolean; secondsUntilReset: number } {
+    const currentTime = new Date();
+    let resetTime: Date | null = null;
+
+    if (typeof rateLimit.resets_at === 'number' && !Number.isNaN(rateLimit.resets_at)) {
+        resetTime = new Date(rateLimit.resets_at * 1000);
+    } else if (typeof rateLimit.resets_in_seconds === 'number' && !Number.isNaN(rateLimit.resets_in_seconds)) {
+        resetTime = new Date(recordTimestamp.getTime() + rateLimit.resets_in_seconds * 1000);
+    }
+
+    if (!resetTime || Number.isNaN(resetTime.getTime())) {
+        return { resetTime: recordTimestamp, isOutdated: true, secondsUntilReset: 0 };
+    }
+
+    const secondsUntilReset = Math.max(0, Math.floor((resetTime.getTime() - currentTime.getTime()) / 1000));
+    const isOutdated = resetTime < currentTime;
+
+    return { resetTime, isOutdated, secondsUntilReset };
+}
+
+async function parseSessionFile(filePath: string): Promise<EventRecord | null> {
+    try {
+        const content = await fs.promises.readFile(filePath, 'utf-8');
+        const lines = content.split('\n').filter(line => line.trim());
+        let latestRecord: EventRecord | null = null;
+        let latestTimestamp: Date | null = null;
+
+        for (const line of lines) {
+            try {
+                const record = JSON.parse(line);
+                if (record.type === 'event_msg' && record.payload?.type === 'token_count') {
+                    const timestamp = new Date(record.timestamp.replace('Z', '+00:00'));
+                    if (!latestTimestamp || timestamp > latestTimestamp) {
+                        latestTimestamp = timestamp;
+                        latestRecord = record as EventRecord;
+                    }
+                }
+            } catch { continue; }
+        }
+        return latestRecord;
+    } catch { return null; }
+}
+
+async function getCodexSessionFilesWithMtime(sessionPath: string): Promise<{ file: string; mtimeMs: number }[]> {
+    const sessionFiles: { file: string; mtimeMs: number }[] = [];
+    const currentDate = new Date();
+
+    for (let daysBack = 0; daysBack < 7; daysBack++) {
+        const searchDate = new Date(currentDate);
+        searchDate.setDate(currentDate.getDate() - daysBack);
+        const year = searchDate.getFullYear();
+        const month = String(searchDate.getMonth() + 1).padStart(2, '0');
+        const day = String(searchDate.getDate()).padStart(2, '0');
+        const datePath = path.join(sessionPath, String(year), month, day);
+
+        if (!fs.existsSync(datePath)) continue;
+
+        try {
+            const pattern = path.join(datePath, 'rollout-*.jsonl').replace(/\\/g, '/');
+            const files = await glob(pattern, { nodir: true });
+            for (const file of files) {
+                try {
+                    const stats = await fs.promises.stat(file);
+                    sessionFiles.push({ file, mtimeMs: stats.mtimeMs });
+                } catch { /* ignore */ }
+            }
+        } catch { /* ignore */ }
+    }
+    sessionFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return sessionFiles;
+}
+
+async function findLatestTokenCountRecord(basePath?: string): Promise<{ file: string; record: EventRecord } | null> {
+    const sessionPath = getCodexSessionBasePath(basePath);
+    if (!fs.existsSync(sessionPath)) return null;
+
+    const nowMs = Date.now();
+    const oneHourAgoMs = nowMs - 60 * 60 * 1000;
+    const attemptedFiles = new Set<string>();
+    const today = new Date();
+    const todayPath = path.join(sessionPath, String(today.getFullYear()), String(today.getMonth() + 1).padStart(2, '0'), String(today.getDate()).padStart(2, '0'));
+
+    if (fs.existsSync(todayPath)) {
+        try {
+            const pattern = path.join(todayPath, 'rollout-*.jsonl').replace(/\\/g, '/');
+            const files = await glob(pattern, { nodir: true });
+            const recentFiles: { file: string; mtimeMs: number }[] = [];
+
+            for (const file of files) {
+                try {
+                    const stats = await fs.promises.stat(file);
+                    if (stats.mtimeMs >= oneHourAgoMs) recentFiles.push({ file, mtimeMs: stats.mtimeMs });
+                } catch { /* ignore */ }
+            }
+
+            recentFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
+            for (const { file } of recentFiles) {
+                attemptedFiles.add(file);
+                const record = await parseSessionFile(file);
+                if (record) return { file, record };
+            }
+        } catch { /* ignore */ }
+    }
+
+    const sessionFiles = await getCodexSessionFilesWithMtime(sessionPath);
+    for (const { file } of sessionFiles) {
+        if (attemptedFiles.has(file)) continue;
+        const record = await parseSessionFile(file);
+        if (record) return { file, record };
+    }
+    return null;
+}
+
+function createEmptyTokenUsage(): TokenUsage {
+    return { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 };
+}
+
+export async function getCodexRateLimitData(customPath?: string): Promise<{ found: boolean; data?: RateLimitData; error?: string }> {
+    try {
+        const result = await findLatestTokenCountRecord(customPath);
+        if (!result) return { found: false, error: 'No token_count events found' };
+
+        const { file, record } = result;
+        const payload = record.payload;
+        const rateLimits = payload.rate_limits || {};
+        const info = payload.info;
+
+        const recordTimestamp = new Date(record.timestamp.replace('Z', '+00:00'));
+        const currentTime = new Date();
+
+        const totalUsage = info?.total_token_usage ?? createEmptyTokenUsage();
+        const lastUsage = info?.last_token_usage ?? createEmptyTokenUsage();
+
+        const data: RateLimitData = {
+            file_path: file,
+            record_timestamp: recordTimestamp,
+            current_time: currentTime,
+            total_usage: totalUsage,
+            last_usage: lastUsage
+        };
+
+        if (rateLimits.primary) {
+            const primary = rateLimits.primary;
+            const { resetTime, isOutdated, secondsUntilReset } = calculateResetTime(recordTimestamp, primary);
+            const rawWindowMinutes = primary.window_minutes;
+            const windowMinutes = typeof rawWindowMinutes === 'number' && rawWindowMinutes > 0 ? rawWindowMinutes : 0;
+            const windowSeconds = windowMinutes * 60;
+            let timePercent = 0;
+            if (windowSeconds > 0) {
+                if (isOutdated) timePercent = 100.0;
+                else {
+                    const elapsedSeconds = windowSeconds - secondsUntilReset;
+                    const boundedElapsedSeconds = Math.max(0, Math.min(windowSeconds, elapsedSeconds));
+                    timePercent = (boundedElapsedSeconds / windowSeconds) * 100;
+                }
+            }
+            data.primary = {
+                used_percent: primary.used_percent,
+                time_percent: Math.max(0, Math.min(100, timePercent)),
+                reset_time: resetTime,
+                outdated: isOutdated,
+                window_minutes: windowMinutes
+            };
+        }
+
+        if (rateLimits.secondary) {
+            const secondary = rateLimits.secondary;
+            const { resetTime, isOutdated, secondsUntilReset } = calculateResetTime(recordTimestamp, secondary);
+            const rawWindowMinutes = secondary.window_minutes;
+            const windowMinutes = typeof rawWindowMinutes === 'number' && rawWindowMinutes > 0 ? rawWindowMinutes : 0;
+            const windowSeconds = windowMinutes * 60;
+            let timePercent = 0;
+            if (windowSeconds > 0) {
+                if (isOutdated) timePercent = 100.0;
+                else {
+                    const elapsedSeconds = windowSeconds - secondsUntilReset;
+                    const boundedElapsedSeconds = Math.max(0, Math.min(windowSeconds, elapsedSeconds));
+                    timePercent = (boundedElapsedSeconds / windowSeconds) * 100;
+                }
+            }
+            data.secondary = {
+                used_percent: secondary.used_percent,
+                time_percent: Math.max(0, Math.min(100, timePercent)),
+                reset_time: resetTime,
+                outdated: isOutdated,
+                window_minutes: windowMinutes
+            };
+        }
+
+        return { found: true, data };
+    } catch (error: any) {
+        return { found: false, error: error.message };
+    }
 }
 
 const API_PATH = '/exa.language_server_pb.LanguageServerService/GetUserStatus';
@@ -234,7 +499,14 @@ export class QuotaService {
 
     // ─── [ADDED] Combined dashboard fetch ────────────────────────────────────
     async fetchDashboard(): Promise<DashboardData> {
-        const antigravity = await this.fetchStatus();
-        return { antigravity };
+        const [antigravity, codexResult] = await Promise.all([
+            this.fetchStatus(),
+            getCodexRateLimitData()
+        ]);
+
+        return {
+            antigravity,
+            codex: codexResult.found ? codexResult.data : null
+        };
     }
 }
