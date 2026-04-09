@@ -100,9 +100,11 @@ function buildTooltipSVG(data: any): string {
     const renderGroupSection = (title: string, quotas: any[]) => {
         if (!quotas || quotas.length === 0) return;
 
-        // Group Header
-        contentHtml += `<text x="${padding}" y="${currentY + 12}" font-family="sans-serif" font-size="10" font-weight="800" fill="#4B5563" text-transform="uppercase">${title}</text>`;
-        currentY += groupHeaderHeight;
+        // Group Header (High-tech style)
+        contentHtml += `
+            <text x="${padding}" y="${currentY + 12}" font-family="monospace, sans-serif" font-size="10" font-weight="900" fill="#40c4ff" style="letter-spacing: 1px;">${title}</text>
+        `;
+        currentY += groupHeaderHeight + 2;
 
         quotas.forEach((q: any) => {
             const pct = Math.round(q.remaining);

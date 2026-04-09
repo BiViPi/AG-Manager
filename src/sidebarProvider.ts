@@ -49,15 +49,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (this._view) {
             this._view.webview.postMessage({ type: "loading" });
         }
-        // [MODIFIED] Changed fetchStatus() → fetchDashboard() to include Claude & Codex
+        // Changed fetchStatus() -> fetchDashboard() to include Codex
         const data = await this._quotaService.fetchDashboard();
 
-        setLatestData(data); // Cập nhật global state và status bar
+        setLatestData(data); // Update global state and status bar
     }
 
     private _getHtmlForWebview(webview: vscode.Webview) {
         const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, "webview-ui", "style.css"));
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, "webview-ui", "main.js"));
+        const i18nUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, "webview-ui", "i18n.js"));
 
         return `<!DOCTYPE html>
             <html lang="en">
@@ -70,13 +71,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 <div id="app">
                     <div class="header">
                         <h1>Quota Dashboard</h1>
-                        <button id="refresh-btn">Refresh</button>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <select id="lang-select" title="Language">
+                                <option value="en">EN</option>
+                                <option value="vi">VI</option>
+                            </select>
+                            <button id="refresh-btn">Refresh</button>
+                        </div>
                     </div>
                     <div id="user-info"></div>
                     <div id="quota-list">
                         <p class="loading">Establishing connection...</p>
                     </div>
                 </div>
+                <script src="${i18nUri}"></script>
                 <script src="${scriptUri}"></script>
             </body>
             </html>`;

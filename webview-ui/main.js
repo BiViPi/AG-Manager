@@ -1,11 +1,20 @@
 const vscode = acquireVsCodeApi();
 const state = vscode.getState() || {};
 
+// Initialize locale from persisted state
+window.LOCALE = state.locale || 'en';
+
+// Restore dropdown selection to match persisted locale
+window.addEventListener('DOMContentLoaded', () => {
+    const sel = document.getElementById('lang-select');
+    if (sel) sel.value = window.LOCALE;
+});
+
 window.addEventListener("message", (event) => {
     const message = event.data;
     switch (message.type) {
         case "update":
-            renderDashboard(message.data); // Assuming updateUI should call renderDashboard or renderDashboard is renamed
+            renderDashboard(message.data);
             break;
         case "loading":
             // Don't clear UI, just show a subtle loading if needed
@@ -17,16 +26,31 @@ window.addEventListener("message", (event) => {
 vscode.postMessage({ type: "onRefresh" });
 
 document.getElementById('refresh-btn').addEventListener('click', () => {
-    document.getElementById('quota-list').innerHTML = '<div class="loading">Refreshing...</div>';
+    document.getElementById('quota-list').innerHTML = `<div class="loading">${t('loading')}</div>`;
     vscode.postMessage({ type: 'onRefresh' });
+});
+
+// Language switcher
+document.getElementById('lang-select').addEventListener('change', (e) => {
+    window.LOCALE = e.target.value;
+    const newState = vscode.getState() || {};
+    newState.locale = window.LOCALE;
+    vscode.setState(newState);
+    // Re-render with cached data if any
+    const cachedData = window._lastDashboardData;
+    if (cachedData) renderDashboard(cachedData);
+    // Also update static elements
+    document.getElementById('refresh-btn').textContent = t('btn.refresh');
+    document.querySelector('.header h1').textContent = t('dashboard.title');
 });
 
 // [MODIFIED] renderDashboard: data is now DashboardData {antigravity, claude, codex}
 // Old: data was UserStatus directly. New: data.antigravity = UserStatus | null
 function renderDashboard(data) {
+    window._lastDashboardData = data; // Cache for locale re-render
     if (!data) {
         document.getElementById('user-info').innerHTML = '';
-        document.getElementById('quota-list').innerHTML = '<p class="error-msg">⚠️ Local server not found.<br>Ensure Antigravity IDE is running.</p>';
+        document.getElementById('quota-list').innerHTML = `<p class="error-msg">${t('error.noServer')}</p>`;
         return;
     }
 
@@ -91,15 +115,15 @@ function renderDashboard(data) {
         }
 
         // Token Usage Summary
-        const t = data.codex.total_usage;
-        const l = data.codex.last_usage;
+        const t_usage = data.codex.total_usage;
+        const l_usage = data.codex.last_usage;
         const fk = n => Math.round((n || 0) / 1000).toLocaleString() + 'K';
         html += `
         <div class="service-group" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.05);">
-            <div class="group-header">TOKEN USAGE FOR CODEX</div>
+            <div class="group-header">${t('tokenUsage.title')}</div>
             <div style="font-family: monospace; font-size: 11px; color: #9CA3AF; margin-top: 8px;">
-                <div style="margin-bottom: 4px;"><strong>Total:</strong> in ${fk(t.input_tokens)}, cache ${fk(t.cached_input_tokens)}, out ${fk(t.output_tokens)}, reasoning ${fk(t.reasoning_output_tokens)}</div>
-                <div><strong>Last:</strong> in ${fk(l.input_tokens)}, cache ${fk(l.cached_input_tokens)}, out ${fk(l.output_tokens)}, reasoning ${fk(l.reasoning_output_tokens)}</div>
+                <div style="margin-bottom: 4px;"><strong>${t('tokenUsage.total')}:</strong> in ${fk(t_usage.input_tokens)}, cache ${fk(t_usage.cached_input_tokens)}, out ${fk(t_usage.output_tokens)}, reasoning ${fk(t_usage.reasoning_output_tokens)}</div>
+                <div><strong>${t('tokenUsage.last')}:</strong> in ${fk(l_usage.input_tokens)}, cache ${fk(l_usage.cached_input_tokens)}, out ${fk(l_usage.output_tokens)}, reasoning ${fk(l_usage.reasoning_output_tokens)}</div>
             </div>
         </div>
         `;
@@ -161,20 +185,20 @@ function renderAutoClick(config) {
     }
 
     const rules = [
-        { id: 'Run', label: 'Bot Chạy (Run)' },
-        { id: 'Allow', label: 'Quyền (Allow)' },
-        { id: 'Accept', label: 'Chấp nhận (Accept)' },
-        { id: 'Always Allow', label: 'Luôn cho phép' },
-        { id: 'Retry', label: 'Thử lại (Retry)' },
-        { id: 'Keep Waiting', label: 'Bỏ qua chờ' },
-        { id: 'Accept all', label: 'Duyệt hết (Accept All)' }
+        { id: 'Run', label: t('rule.Run') },
+        { id: 'Allow', label: t('rule.Allow') },
+        { id: 'Accept', label: t('rule.Accept') },
+        { id: 'Always Allow', label: t('rule.AlwaysAllow') },
+        { id: 'Retry', label: t('rule.Retry') },
+        { id: 'Keep Waiting', label: t('rule.KeepWaiting') },
+        { id: 'Accept all', label: t('rule.AcceptAll') }
     ];
 
     container.innerHTML = `
-        <div class="section-title">Automation Suite</div>
+        <div class="section-title">${t('automation.title')}</div>
         
         <div class="power-row">
-            <span class="power-label">Hệ thống Tự động</span>
+            <span class="power-label">${t('automation.masterSwitch')}</span>
             <label class="switch">
                 <input type="checkbox" id="master-power" ${config.active ? 'checked' : ''}>
                 <span class="slider"></span>
@@ -190,7 +214,7 @@ function renderAutoClick(config) {
                     <div class="automation-card ${isActuallyActive ? 'active' : ''} ${!config.active ? 'disabled' : ''}" data-rule="${rule.id}">
                         <div class="glow-ring"></div>
                         <div class="automation-label">${rule.label}</div>
-                        <div class="automation-status">${isActuallyActive ? 'Active' : (config.active ? 'Idle' : 'Paused')}</div>
+                        <div class="automation-status">${isActuallyActive ? t('automation.statusActive') : (config.active ? t('automation.statusIdle') : t('automation.statusPaused'))}</div>
                     </div>
                 `;
     }).join('')}
