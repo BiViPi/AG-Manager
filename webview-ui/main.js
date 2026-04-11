@@ -56,20 +56,8 @@ function renderDashboard(data) {
             return;
         }
 
-        const ag = data.antigravity;
-        if (ag && ag.name) {
-            document.getElementById('user-info').innerHTML = `
-                <div class="user-card">
-                    <div class="avatar">${ag.name.charAt(0)}</div>
-                    <div class="user-details">
-                        <div class="user-name">${ag.name}</div>
-                        <div class="user-sub">${ag.tier || 'User'} • ${ag.email || ''}</div>
-                    </div>
-                </div>
-            `;
-        } else {
-            document.getElementById('user-info').innerHTML = '';
-        }
+        // User info now moved inside Antigravity group
+        document.getElementById('user-info').innerHTML = '';
 
         // --- Render all service groups ---
         let html = '';
@@ -77,7 +65,18 @@ function renderDashboard(data) {
         const collapsed = state.collapsed || {};
         const visibility = data.visibility || {};
 
-        if (ag && ag.quotas) {
+        const ag = data.antigravity;
+        if (ag && ag.name) {
+            let agSubHtml = `
+                <div class="user-card" style="margin-bottom:10px; background:rgba(255,255,255,0.03);">
+                    <div class="avatar" style="width:24px; height:24px; font-size:10px; line-height:24px;">${ag.name.charAt(0)}</div>
+                    <div class="user-details">
+                        <div class="user-name" style="font-size:11px;">${ag.name}</div>
+                        <div class="user-sub" style="font-size:9px;">${ag.tier || 'User'} • ${ag.email || ''}</div>
+                    </div>
+                </div>
+            `;
+
             const GROUPS_CONFIG = [
                 { id: 'g1', title: 'PRO MODELS', match: (l) => l.includes('Gemini 3.1 Pro') },
                 { id: 'g2', title: 'FLASH MODELS', match: (l) => l.includes('Gemini 3 Flash') || (l.includes('Flash') && l.includes('Gemini')) },
@@ -87,12 +86,14 @@ function renderDashboard(data) {
             GROUPS_CONFIG.forEach(group => {
                 const groupQuotas = ag.quotas.filter(q => group.match(q.label));
                 if (groupQuotas.length > 0) {
-                    html += renderServiceGroup(group.title, {
+                    agSubHtml += renderServiceGroup(group.title, {
                         ...ag,
                         quotas: groupQuotas
                     }, group.id, visibility[group.id] !== false, collapsed[group.id] === true);
                 }
             });
+
+            html += renderServiceGroup('ANTIGRAVITY', agSubHtml, 'ag-master', visibility['ag-master'] !== false, collapsed['ag-master'] === true, true);
         }
 
         if (data.codex) {
@@ -212,21 +213,25 @@ function getHexColor(pct, direction) {
     }
 }
 
-function renderServiceGroup(title, status, groupId, isVisible, isCollapsed) {
-    if (!status) { return ''; }
+function renderServiceGroup(title, statusOrHtml, groupId, isVisible, isCollapsed, isMaster = false) {
+    if (!statusOrHtml) { return ''; }
 
-    const isAuthenticated = status.isAuthenticated !== false;
     let itemsHtml = '';
-    if (isAuthenticated && status.quotas && status.quotas.length > 0) {
-        itemsHtml = `<div class="model-list">${status.quotas.map(q => createModelCard(q)).join('')}</div>`;
-    } else if (!isAuthenticated) {
-        itemsHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">🔒 ${status.email}</p>`;
+    if (typeof statusOrHtml === 'string') {
+        itemsHtml = statusOrHtml;
+    } else {
+        const isAuthenticated = statusOrHtml.isAuthenticated !== false;
+        if (isAuthenticated && statusOrHtml.quotas && statusOrHtml.quotas.length > 0) {
+            itemsHtml = `<div class="model-list">${statusOrHtml.quotas.map(q => createModelCard(q)).join('')}</div>`;
+        } else if (!isAuthenticated) {
+            itemsHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">🔒 ${statusOrHtml.email}</p>`;
+        }
     }
 
     // Determine branded class
     let brandClass = '';
     const upperTitle = title.toUpperCase();
-    if (upperTitle.includes('PRO') || upperTitle.includes('FLASH') || (upperTitle.includes('CLAUDE') && !upperTitle.includes('OAUTH'))) {
+    if (isMaster || upperTitle.includes('PRO') || upperTitle.includes('FLASH') || (upperTitle.includes('CLAUDE') && !upperTitle.includes('OAUTH'))) {
         brandClass = 'antigravity';
     }
     else if (upperTitle.includes('CODEX')) brandClass = 'codex';
@@ -239,7 +244,7 @@ function renderServiceGroup(title, status, groupId, isVisible, isCollapsed) {
     const chevronIcon = '▼';
 
     return `
-        <div class="service-group ${isCollapsed ? 'collapsed' : ''}" data-group-id="${groupId}">
+        <div class="service-group ${isCollapsed ? 'collapsed' : ''} ${isMaster ? 'master' : 'nested'}" data-group-id="${groupId}">
             <div class="row-header">
                 <div class="header-left" onclick="toggleGroupCollapse('${groupId}')">
                     <span class="chevron">${chevronIcon}</span>

@@ -191,7 +191,7 @@ function buildTooltipSVG(data: any): string {
     };
 
     // Render sections for each service
-    if (data.antigravity?.quotas) {
+    if (isGroupVisible('ag-master') && data.antigravity?.quotas) {
         GROUPS.forEach(group => {
             if (!isGroupVisible(group.id)) return;
             const members = data.antigravity.quotas.filter((q: any) => group.match(q.label));
@@ -323,8 +323,9 @@ function refreshStatusBar() {
     let groupsText = "";
 
     // 1. Antigravity Groups
-    if (latestQuotaData.antigravity?.quotas) {
-        groupsText += GROUPS.map(g => {
+    const agVisible = isGroupVisible('ag-master');
+    if (agVisible && latestQuotaData.antigravity?.quotas) {
+        let agText = GROUPS.map(g => {
             if (!isGroupVisible(g.id)) return '';
             const members = latestQuotaData.antigravity.quotas.filter((q: any) => g.match(q.label));
             if (members.length === 0) return '';
@@ -333,6 +334,8 @@ function refreshStatusBar() {
             const dot = avg > 50 ? '🟢' : (avg > 20 ? '🟡' : '🔴');
             return `${dot} ${short} ${Math.round(avg)}%`;
         }).filter(t => t !== '').join('  |  ');
+
+        if (agText) groupsText += agText;
     }
 
     // 2. Codex Quota
