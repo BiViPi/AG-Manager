@@ -4,7 +4,7 @@
  */
 window.I18N = {
     en: {
-        'dashboard.title': 'Antigravity-Codex Monitor',
+        'dashboard.title': 'Antigravity-Codex-Claude Monitor',
         'btn.refresh': 'Refresh',
         'loading': 'Establishing connection...',
         'error.noServer': '⚠️ Local server not found.\nEnsure Antigravity IDE is running.',
@@ -25,7 +25,7 @@ window.I18N = {
         'tokenUsage.last': 'Last',
     },
     vi: {
-        'dashboard.title': 'Monitor Antigravity-Codex',
+        'dashboard.title': 'Monitor Antigravity-Codex-Claude',
         'btn.refresh': 'Làm mới',
         'loading': 'Đang kết nối...',
         'error.noServer': '⚠️ Không tìm thấy máy chủ.\nHãy mở Antigravity IDE.',

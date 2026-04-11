@@ -1,34 +1,36 @@
-# Antigravity-Codex Monitor
+# Antigravity-Codex-Claude Monitor
 
 [English Below]
 
-**Antigravity-Codex Monitor** (trước đây là AG Manager) là tiện ích tối ưu dành cho người dùng **Antigravity IDE**, giúp bạn giám sát và quản lý hạn mức sử dụng (quota) AI cực kỳ chính xác.
+**Antigravity-Codex-Claude Monitor** là tiện ích tối ưu dành cho người dùng **Antigravity IDE**, giúp bạn giám sát và quản lý hạn mức sử dụng (quota) AI đa nền tảng (Gemini, Claude, Codex) cực kỳ chính xác.
 
 ---
 
-**Antigravity-Codex Monitor** (formerly AG Manager) is the ultimate extension for **Antigravity IDE** users, providing high-precision monitoring of AI model quotas.
+**Antigravity-Codex-Claude Monitor** is the ultimate extension for **Antigravity IDE** users, providing high-precision monitoring of cross-platform AI model quotas (Gemini, Claude, Codex).
 
 ## 📸 Previews
 
-| Dashboard | Status Bar Popup |
+| Dashboard (Compact Mode) | Status Bar Popup |
 |-----------|------------------|
 | ![Dashboard](./logo/dashboard.png) | ![Popup](./logo/popup.png) |
 
 ## 🚀 Tính năng nổi bật / Key Features
 
 ### 🇻🇳 Tiếng Việt
-- **Codex Quota Monitoring:** Tích hợp radar giám sát OpenAI Codex (ChatGPT) chính xác 99% thông qua việc bóc tách session file thực tế.
-- **Dashboard Liquid Glass:** Giao diện Dashboard và Tooltip phong cách kính mờ (Glassmorphism), hiển thị Gemini, GPT và Codex trực quan.
+- **Claude (OAuth) Monitoring:** Tích hợp giám sát quota Claude chính chủ thông qua cơ chế OAuth an toàn.
+- **Codex Quota Monitoring:** Giám sát OpenAI Codex (ChatGPT) chính xác 99% bằng cách bóc tách session file thực tế.
+- **Thiết kế High-Density:** Giao diện Dashboard siêu nén (Ultra-Compact) với hệ thống Dropdown lồng nhau chuyên nghiệp.
 - **Cảnh Báo Thông Minh:** Tự động thông báo theo từng nhóm (group) thay vì báo spam từng model riêng lẻ.
-- **Automation Suite (Hệ thống tự động):** Cấu hình tự click thông minh, có cơ chế an toàn siêu việt.
+- **Automation Suite (Hệ thống tự động):** Cấu hình tự click thông minh và các quy tắc an toàn tự động.
 - **Tự động làm mới:** Cấu hình quét dữ liệu ngầm tự động (1-30 phút).
 
 ### 🇺🇸 English
-- **Codex Quota Monitoring:** Re-integrated OpenAI Codex (ChatGPT) tracking with 99% precision using real-time session file parsing.
-- **Liquid Glass Dashboard:** Beautiful Glassmorphism UI for both Dashboard and Tooltips, monitoring Gemini, GPT, and Codex.
-- **Smart Notifications:** Group-based alerts to prevent spam when average remaining quota drops below a safe threshold.
-- **Automation Suite:** Intelligent background click automation with a robust fail-safe mechanism.
-- **Background Auto-Refresh:** Configurable background updates (1-30 minutes).
+- **Claude (OAuth) Monitoring:** Seamless monitoring of official Claude account quotas via integrated OAuth support.
+- **Codex Quota Monitoring:** High-precision (99%) OpenAI Codex (ChatGPT) tracking using real-time session parsing.
+- **High-Density Design:** Ultra-compact Dashboard UI with a professional nested accordion system.
+- **Smart Notifications:** Group-based alerts to prevent spam when average remaining quota drops below threshold.
+- **Automation Suite:** Intelligent background click automation with robust safety mechanisms.
+- **Background Auto-Refresh:** Configurable background updates (1-30 minutes) to keep your metrics fresh.
 
 ## 🛠 Cấu hình / Settings
 
@@ -36,4 +38,4 @@
 - `sqm.enableNotifications`: (Default: true)
 
 ---
-*Developed by BiViPi - Optimized for your coding performance.*
+*Developed by BiViPi - Optimized for your AI coding throughput.*

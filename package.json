@@ -1,8 +1,8 @@
 {
     "name": "ag-manager",
-    "displayName": "Antigravity-Codex Monitor",
+    "displayName": "Antigravity-Codex-Claude Monitor",
     "description": "Monitor AI model quotas and manage automation features inside Antigravity IDE.",
-    "version": "1.3.0",
+    "version": "1.4.0",
     "publisher": "BiViPi",
     "author": {
         "name": "BiViPi",
