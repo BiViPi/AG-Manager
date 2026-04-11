@@ -45,7 +45,6 @@ document.getElementById('lang-select').addEventListener('change', (e) => {
 });
 
 // [MODIFIED] renderDashboard: data is now DashboardData {antigravity, claude, codex}
-// Old: data was UserStatus directly. New: data.antigravity = UserStatus | null
 function renderDashboard(data) {
     window._lastDashboardData = data; // Cache for locale re-render
     if (!data) {
@@ -54,7 +53,7 @@ function renderDashboard(data) {
         return;
     }
 
-    // --- Antigravity user card (unchanged logic, uses data.antigravity) ---
+    // --- Antigravity user card ---
     const ag = data.antigravity;
     if (ag) {
         document.getElementById('user-info').innerHTML = `
@@ -71,10 +70,25 @@ function renderDashboard(data) {
     }
 
     // --- Render all service groups ---
-    // [ADDED] renderServiceGroup helper: renders a titled gauge group identical to Antigravity style
     let html = '';
-    if (ag) {
-        html += renderServiceGroup('ANTIGRAVITY', ag);
+    const visibility = data.visibility || {};
+
+    if (ag && ag.quotas) {
+        const GROUPS_CONFIG = [
+            { id: 'g1', title: 'PRO MODELS', match: (l) => l.includes('Gemini 3.1 Pro') },
+            { id: 'g2', title: 'FLASH MODELS', match: (l) => l.includes('Gemini 3 Flash') || (l.includes('Flash') && l.includes('Gemini')) },
+            { id: 'g3', title: 'CLAUDE MODELS', match: (l) => l.includes('Claude') || l.includes('GPT') }
+        ];
+
+        GROUPS_CONFIG.forEach(group => {
+            const groupQuotas = ag.quotas.filter(q => group.match(q.label));
+            if (groupQuotas.length > 0) {
+                html += renderServiceGroup(group.title, {
+                    ...ag,
+                    quotas: groupQuotas
+                }, group.id, visibility[group.id] !== false);
+            }
+        });
     }
 
     if (data.codex) {
@@ -88,7 +102,7 @@ function renderDashboard(data) {
                 resetTime: new Date(p.reset_time).toLocaleString(),
                 label: '5-Hour Session',
                 style: 'fluid',
-                themeColor: '#10b981', // Force Green for Codex
+                themeColor: '#10b981', // Green
                 displayValue: `${Math.round(remaining)}%`
             });
         }
@@ -101,7 +115,7 @@ function renderDashboard(data) {
                 resetTime: new Date(s.reset_time).toLocaleString(),
                 label: 'Weekly Limit',
                 style: 'fluid',
-                themeColor: '#10b981', // Force Green for Codex
+                themeColor: '#10b981', // Green
                 displayValue: `${Math.round(remaining)}%`
             });
         }
@@ -111,22 +125,63 @@ function renderDashboard(data) {
                 email: 'codex-ratelimit',
                 quotas: codexQuotas,
                 isAuthenticated: true
-            });
+            }, 'codex', visibility['codex'] !== false);
         }
+    }
 
-        // Token Usage Summary
-        const t_usage = data.codex.total_usage;
-        const l_usage = data.codex.last_usage;
-        const fk = n => Math.round((n || 0) / 1000).toLocaleString() + 'K';
-        html += `
-        <div class="service-group" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.05);">
-            <div class="group-header">${t('tokenUsage.title')}</div>
-            <div style="font-family: monospace; font-size: 11px; color: #9CA3AF; margin-top: 8px;">
-                <div style="margin-bottom: 4px;"><strong>${t('tokenUsage.total')}:</strong> in ${fk(t_usage.input_tokens)}, cache ${fk(t_usage.cached_input_tokens)}, out ${fk(t_usage.output_tokens)}, reasoning ${fk(t_usage.reasoning_output_tokens)}</div>
-                <div><strong>${t('tokenUsage.last')}:</strong> in ${fk(l_usage.input_tokens)}, cache ${fk(l_usage.cached_input_tokens)}, out ${fk(l_usage.output_tokens)}, reasoning ${fk(l_usage.reasoning_output_tokens)}</div>
-            </div>
-        </div>
-        `;
+    if (data.claude) {
+        try {
+            const claudeQuotas = [];
+            const now = new Date();
+            if (data.claude.session && data.claude.session.resetAt) {
+                const rDate = new Date(data.claude.session.resetAt);
+                const diffMs = rDate.getTime() - now.getTime();
+                let countdown = 'Ready';
+                if (diffMs > 0) {
+                    const mins = Math.floor(diffMs / 60000);
+                    countdown = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+                }
+
+                claudeQuotas.push({
+                    remaining: (data.claude.session.pctUsed || 0) * 100,
+                    direction: 'up',
+                    resetTime: countdown,
+                    label: '5-Hour Session',
+                    style: 'fluid',
+                    themeColor: '#D97757', // Claude Orange
+                    displayValue: `${Math.round((data.claude.session.pctUsed || 0) * 100)}%`
+                });
+            }
+            if (data.claude.weekly && data.claude.weekly.resetAt) {
+                const rDate = new Date(data.claude.weekly.resetAt);
+                const diffMs = rDate.getTime() - now.getTime();
+                let countdown = 'Ready';
+                if (diffMs > 0) {
+                    const mins = Math.floor(diffMs / 60000);
+                    countdown = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+                }
+
+                claudeQuotas.push({
+                    remaining: (data.claude.weekly.pctUsed || 0) * 100,
+                    direction: 'up',
+                    resetTime: countdown,
+                    label: 'Weekly Limit',
+                    style: 'fluid',
+                    themeColor: '#D97757', // Claude Orange
+                    displayValue: `${Math.round((data.claude.weekly.pctUsed || 0) * 100)}%`
+                });
+            }
+            if (claudeQuotas.length > 0) {
+                html += renderServiceGroup('CLAUDE (OAuth)', {
+                    tier: data.claude.subscriptionType || 'Pro',
+                    email: 'Claude Quota API',
+                    quotas: claudeQuotas,
+                    isAuthenticated: true
+                }, 'claude', visibility['claude'] !== false);
+            }
+        } catch (e) {
+            console.error('[SQM] Error rendering Claude section:', e);
+        }
     }
 
     document.getElementById('quota-list').innerHTML = html;
@@ -150,29 +205,51 @@ function getHexColor(pct, direction) {
     }
 }
 
-// [ADDED] Renders a single service group (title + user info row + gauges)
-// Uses exact same HTML/CSS structure as original Antigravity rendering
-function renderServiceGroup(title, status) {
+function renderServiceGroup(title, status, groupId, isVisible) {
     if (!status) { return ''; }
 
-    const isAuthenticated = status.isAuthenticated !== false; // true if undefined (backward compat)
-    const infoLine = `${status.tier} • ${status.email}`;
-
-    let gaugesHtml = '';
+    const isAuthenticated = status.isAuthenticated !== false;
+    let itemsHtml = '';
     if (isAuthenticated && status.quotas && status.quotas.length > 0) {
-        gaugesHtml = `<div class="gauge-grid">${status.quotas.map(q => createGauge(q)).join('')}</div>`;
+        itemsHtml = `<div class="model-list">${status.quotas.map(q => createModelCard(q)).join('')}</div>`;
     } else if (!isAuthenticated) {
-        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">🔒 ${status.email}</p>`;
+        itemsHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">🔒 ${status.email}</p>`;
     }
+
+    // Determine branded class
+    let brandClass = '';
+    const upperTitle = title.toUpperCase();
+    // Include CLAUDE MODELS but exclude CLAUDE (OAUTH) from special AG branding if needed
+    // However, user said "Claude này thuộc về Antigravity nên là dùng 3 màu như gemini"
+    // He means the group with Sonnet 4.6, Opus 4.6.
+    if (upperTitle.includes('PRO') || upperTitle.includes('FLASH') || (upperTitle.includes('CLAUDE') && !upperTitle.includes('OAUTH'))) {
+        brandClass = 'antigravity';
+    }
+    else if (upperTitle.includes('CODEX')) brandClass = 'codex';
+    else if (upperTitle.includes('CLAUDE')) brandClass = 'claude';
+
+    // Visibility Icon
+    const eyeIcon = isVisible ? '👁️' : '🕶️';
+    const hiddenClass = isVisible ? '' : 'hidden-state';
 
     return `
         <div class="service-group">
-            <div class="group-header">${title}</div>
-            ${gaugesHtml}
+            <div class="row-header">
+                <div class="group-header ${brandClass}">${title}</div>
+                <span class="visibility-btn ${hiddenClass}" 
+                      onclick="toggleGroupVisibility('${groupId}')" 
+                      title="Toggle Status Bar Visibility">
+                    ${eyeIcon}
+                </span>
+            </div>
+            ${itemsHtml}
         </div>
     `;
 }
 
+window.toggleGroupVisibility = function (groupId) {
+    vscode.postMessage({ type: 'onToggleVisibility', groupId });
+};
 
 function renderAutoClick(config) {
     let container = document.getElementById('automation-module');
@@ -220,7 +297,6 @@ function renderAutoClick(config) {
         </div>
     `;
 
-    // Events
     document.getElementById('master-power').addEventListener('change', (e) => {
         vscode.postMessage({
             type: 'onAutoClickChange',
@@ -233,17 +309,11 @@ function renderAutoClick(config) {
             const ruleId = card.getAttribute('data-rule');
             const rulesList = Array.isArray(config.rules) ? config.rules : [];
             let currentRules = [...rulesList];
-
-            // Visual feedback
-            card.style.opacity = '0.5';
-            card.style.pointerEvents = 'none';
-
             if (currentRules.includes(ruleId)) {
                 currentRules = currentRules.filter(r => r !== ruleId);
             } else {
                 currentRules.push(ruleId);
             }
-
             vscode.postMessage({
                 type: 'onAutoClickChange',
                 config: { rules: currentRules }
@@ -263,51 +333,27 @@ function formatTime(t) {
     return `0d ${h}h ${m}m`;
 }
 
-function createGauge(quota) {
+function createModelCard(quota) {
     const pct = Math.round(quota.remaining);
-    const R = 30;
-    const C = 2 * Math.PI * R;           // circumference
-    const filled = C * (pct / 100);
-    const dash = `${filled} ${C}`;
-
-    // [MODIFIED] User displayValue if provided (e.g. "23"), otherwise pct%
-    const centerText = quota.displayValue !== undefined ? quota.displayValue : `${pct}%`;
-
-    // [MODIFIED] Directionality: Up (Clockwise) or Down (Counter-clockwise)
-    // To deplete from top (12 o'clock) counter-clockwise:
-    // rotate(90 40 40) changes start to 6 o'clock clockwise.
-    // scale(-1, 1) translate(-80, 0) flips it to start at 6 o'clock counter-clockwise.
-    // Wait, to start at 12 o'clock counter-clockwise, rotate(-90) starts at 12 o'clock clockwise.
-    // Flapping X axis makes it counter-clockwise!
-    const isDown = quota.direction === 'down' || quota.direction === undefined;
-    const transform = isDown
-        ? "rotate(-90 40 40) scale(1, -1) translate(0, -80)" // Flip Y axis: starts at 12 o'clock, counter-clockwise!
-        : "rotate(-90 40 40)";                             // Clockwise from 12 o'clock
-
-    // Calculate precise dash offset to ensure the empty space represents the depleted amount
-    // If it's a depleting HP bar, filled = pct, empty = 100-pct
-    // We want the bar to be filled exactly `pct`. The stroke length is `filled`.
-    // The dash array `filled C` is correct.
+    const color = quota.themeColor || '#40c4ff';
+    const displayVal = quota.displayValue !== undefined ? quota.displayValue : `${pct}%`;
 
     return `
-        <div class="gauge-item">
-            <svg class="gauge-svg" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
-                <circle class="gauge-track" cx="40" cy="40" r="${R}"/>
-                <circle class="gauge-arc" cx="40" cy="40" r="${R}"
-                    stroke="${quota.themeColor}"
-                    stroke-dasharray="${dash}"
-                    stroke-dashoffset="0"
-                    transform="${transform}"/>
-                <text class="gauge-pct" x="40" y="40">${centerText}</text>
-            </svg>
-            <div class="gauge-label">${shortLabel(quota.label)}</div>
-            <div class="gauge-time">${formatTime(quota.resetTime)}</div>
+        <div class="model-card">
+            <div class="card-header">
+                <span class="model-name">${shortLabel(quota.label)}</span>
+                <span class="model-time">${formatTime(quota.resetTime)}</span>
+            </div>
+            <div class="hp-track">
+                <div class="hp-fill" style="width: ${pct}%; background: ${color}; box-shadow: 0 0 10px ${color}66;">
+                    <span class="hp-pct">${displayVal}</span>
+                </div>
+            </div>
         </div>
     `;
 }
 
 function shortLabel(label) {
-    // Rút gọn tên model cho compact display
     return label
         .replace('Gemini 3.1', 'G3.1')
         .replace('Gemini 3', 'G3')

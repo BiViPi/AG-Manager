@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { glob } from 'glob';
+import { ClaudeQuotaManager, ClaudeQuotaInfo } from './claudeQuotaService';
 
 const execAsync = promisify(exec);
 
@@ -55,6 +56,7 @@ export interface UserStatus {
 export interface DashboardData {
     antigravity: UserStatus | null;
     codex?: RateLimitData | null;
+    claude?: ClaudeQuotaInfo | null;
     autoClick?: any;
 }
 
@@ -324,6 +326,7 @@ const API_PATH = '/exa.language_server_pb.LanguageServerService/GetUserStatus';
 export class QuotaService {
     private serverInfo: { port: number, token: string } | null = null;
     private discovering: Promise<boolean> | null = null;
+    private claudeQuotaManager = new ClaudeQuotaManager();
     // [ADDED] Optional logger
     private logger?: vscode.OutputChannel;
 
@@ -499,14 +502,16 @@ export class QuotaService {
 
     // ─── [ADDED] Combined dashboard fetch ────────────────────────────────────
     async fetchDashboard(): Promise<DashboardData> {
-        const [antigravity, codexResult] = await Promise.all([
+        const [antigravity, codexResult, claude] = await Promise.all([
             this.fetchStatus(),
-            getCodexRateLimitData()
+            getCodexRateLimitData(),
+            this.claudeQuotaManager.fetchClaudeQuota()
         ]);
 
         return {
             antigravity,
-            codex: codexResult.found ? codexResult.data : null
+            codex: codexResult.found ? codexResult.data : null,
+            claude
         };
     }
 }

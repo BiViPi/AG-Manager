@@ -12,9 +12,9 @@ let refreshTimer: NodeJS.Timeout | null = null;
 const notifiedModels = new Set<string>();
 
 const GROUPS = [
-    { id: 'g1', title: 'GEMINI 3.1 PRO', models: ['Gemini 3.1 Pro (High)', 'Gemini 3.1 Pro (Low)'] },
-    { id: 'g2', title: 'GEMINI 3 FLASH', models: ['Gemini 3 Flash'] },
-    { id: 'g3', title: 'CLAUDE/GPT', models: ['Claude Sonnet 4.6 (Thinking)', 'Claude Opus 4.6 (Thinking)', 'GPT-OSS 120B (Medium)'] }
+    { id: 'g1', title: 'GEMINI 3.1 PRO', match: (l: string) => l.includes('Gemini 3.1 Pro') },
+    { id: 'g2', title: 'GEMINI 3 FLASH', match: (l: string) => l.includes('Gemini 3 Flash') || l.includes('Flash') && l.includes('Gemini') },
+    { id: 'g3', title: 'CLAUDE/GPT', match: (l: string) => l.includes('Claude') || l.includes('GPT') }
 ];
 
 export function activate(context: vscode.ExtensionContext) {
@@ -62,6 +62,22 @@ export function activate(context: vscode.ExtensionContext) {
             startAutoRefresh();
         }
     }));
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("ag-manager.toggleVisibility", async (groupId: string) => {
+            const current = context.globalState.get<any>('statusBarVisibility') || {};
+            current[groupId] = !current[groupId];
+            if (current[groupId] === undefined) current[groupId] = false; // Default was true, toggle to false
+            await context.globalState.update('statusBarVisibility', current);
+            refreshStatusBar();
+            if (latestQuotaData) setLatestData(latestQuotaData); // Sync to webview
+        })
+    );
+}
+
+function isGroupVisible(groupId: string): boolean {
+    const visibility = globalContext?.globalState.get<any>('statusBarVisibility') || {};
+    return visibility[groupId] !== false; // Default true
 }
 
 function getQuotaColor(pct: number, direction: 'up' | 'down' = 'down'): { hex: string, dot: string } {
@@ -91,25 +107,41 @@ function buildTooltipSVG(data: any): string {
     const rowHeight = 30;
     const groupHeaderHeight = 22;
     const padding = 15;
-    const width = 400;
+    const width = 420;
 
     let contentHtml = '';
     let currentY = padding + 5;
 
     // Helper to render a group section
-    const renderGroupSection = (title: string, quotas: any[]) => {
+    const renderGroupSection = (title: string, quotas: any[], type: 'ag' | 'codex' | 'claude') => {
         if (!quotas || quotas.length === 0) return;
 
-        // Group Header (High-tech style)
+        // Group Header Background (Capsule style)
+        let headerFill = 'rgba(64, 196, 255, 0.1)';
+        let headerTextFill = '#40c4ff';
+        let headerWidth = title.length * 6 + 15;
+
+        if (type === 'ag') {
+            headerFill = 'url(#ag-header-grad)';
+            headerTextFill = '#FFFFFF';
+        } else if (type === 'codex') {
+            headerFill = 'url(#codex-header-grad)';
+            headerTextFill = '#FFFFFF';
+        } else if (type === 'claude') {
+            headerFill = '#D97757';
+            headerTextFill = '#FFFFFF';
+        }
+
         contentHtml += `
-            <text x="${padding}" y="${currentY + 12}" font-family="monospace, sans-serif" font-size="10" font-weight="900" fill="#40c4ff" style="letter-spacing: 1px; filter: drop-shadow(0 0 2px rgba(64,196,255,0.5));">${title}</text>
+            <rect x="${padding}" y="${currentY}" width="${headerWidth}" height="18" rx="6" fill="${headerFill}"/>
+            <text x="${padding + 10}" y="${currentY + 12}" font-family="monospace, sans-serif" font-size="9" font-weight="900" fill="${headerTextFill}" style="letter-spacing: 0.5px;">${title}</text>
         `;
-        currentY += groupHeaderHeight + 2;
+        currentY += groupHeaderHeight + 4;
 
         quotas.forEach((q: any) => {
             const pct = Math.round(q.remaining);
             const color = getQuotaColor(pct, q.direction || 'down');
-            const time = formatTime(q.resetTime);
+            const time = formatTime(q.resetTime || '');
 
             // Row Highlight (Glow effect)
             contentHtml += `<rect x="${padding - 5}" y="${currentY}" width="${width - padding * 2 + 10}" height="${rowHeight - 4}" rx="8" fill="url(#row-grad)" fill-opacity="0.6"/>`;
@@ -117,13 +149,13 @@ function buildTooltipSVG(data: any): string {
             // Dot
             contentHtml += `<circle cx="${padding + 8}" cy="${currentY + 13}" r="3.5" fill="${color.hex}"/>`;
 
-            // Model Name (Vibrant Gradient Text)
+            // Model Name (White & Smaller)
             const cleanName = q.label.replace(' (Thinking)', '').replace(' (Medium)', '');
-            contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="sans-serif" font-size="11" font-weight="800" fill="url(#name-grad)">${cleanName}</text>`;
+            contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="sans-serif" font-size="10" font-weight="600" fill="#FFFFFF">${cleanName}</text>`;
 
             // Progress Bar (Fluid HP style or Segmented)
-            const barX = 180;
-            const barWidth = 60; // 5 * 10 + 4 * 2 = 58 approx, let's use 60
+            const barX = 155;
+            const barWidth = 60;
 
             if (q.style === 'fluid') {
                 // Fluid HP Bar
@@ -141,14 +173,14 @@ function buildTooltipSVG(data: any): string {
                 }
             }
 
-            // Fixed alignment for Pct & Time
-            const pctX = 250;
+            // Fixed alignment for Pct & Time (Stronger spacing)
+            const pctX = 220;
             const centerText = q.displayValue !== undefined ? q.displayValue : `${pct}%`;
-            contentHtml += `<text x="${pctX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="11" font-weight="bold" fill="#FFFFFF">${centerText}</text>`;
+            contentHtml += `<text x="${pctX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="10" font-weight="bold" fill="#FFFFFF">${centerText}</text>`;
 
             const fullTime = `${time} ${q.absResetTime || ''}`.trim();
-            const timeX = 285;
-            contentHtml += `<text x="${timeX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="10" font-weight="bold" fill="#FFFFFF">${fullTime}</text>`;
+            const timeX = 260;
+            contentHtml += `<text x="${timeX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="9" font-weight="500" fill="#AAAAAA">${fullTime}</text>`;
 
             currentY += rowHeight;
         });
@@ -161,12 +193,13 @@ function buildTooltipSVG(data: any): string {
     // Render sections for each service
     if (data.antigravity?.quotas) {
         GROUPS.forEach(group => {
-            const members = data.antigravity.quotas.filter((q: any) => group.models.includes(q.label));
-            renderGroupSection(group.title, members);
+            if (!isGroupVisible(group.id)) return;
+            const members = data.antigravity.quotas.filter((q: any) => group.match(q.label));
+            renderGroupSection(group.title, members, 'ag');
         });
     }
 
-    if (data.codex) {
+    if (data.codex && isGroupVisible('codex')) {
         const codexQuotas = [];
         if (data.codex.primary && !data.codex.primary.outdated) {
             const p = data.codex.primary;
@@ -195,7 +228,55 @@ function buildTooltipSVG(data: any): string {
             });
         }
         if (codexQuotas.length > 0) {
-            renderGroupSection('CODEX (ChatGPT)', codexQuotas);
+            renderGroupSection('CODEX (ChatGPT)', codexQuotas, 'codex');
+        }
+    }
+
+    if (data.claude && isGroupVisible('claude')) {
+        const claudeQuotas = [];
+        const now = new Date();
+        if (data.claude.session && data.claude.session.resetAt) {
+            const rDate = new Date(data.claude.session.resetAt);
+            const diffMs = rDate.getTime() - now.getTime();
+            let countdown = 'Ready';
+            if (diffMs > 0) {
+                const mins = Math.floor(diffMs / 60000);
+                countdown = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+            }
+
+            claudeQuotas.push({
+                remaining: data.claude.session.pctUsed * 100,
+                direction: 'up',
+                resetTime: countdown,
+                absResetTime: '',
+                label: '5-Hour Session',
+                style: 'fluid',
+                themeColor: '#D97757', // Claude Orange
+                displayValue: `${Math.round(data.claude.session.pctUsed * 100)}%`
+            });
+        }
+        if (data.claude.weekly && data.claude.weekly.resetAt) {
+            const rDate = new Date(data.claude.weekly.resetAt);
+            const diffMs = rDate.getTime() - now.getTime();
+            let countdown = 'Ready';
+            if (diffMs > 0) {
+                const mins = Math.floor(diffMs / 60000);
+                countdown = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+            }
+
+            claudeQuotas.push({
+                remaining: data.claude.weekly.pctUsed * 100,
+                direction: 'up',
+                resetTime: countdown,
+                absResetTime: '',
+                label: 'Weekly Limit',
+                style: 'fluid',
+                themeColor: '#D97757', // Claude Orange
+                displayValue: `${Math.round(data.claude.weekly.pctUsed * 100)}%`
+            });
+        }
+        if (claudeQuotas.length > 0) {
+            renderGroupSection('CLAUDE (OAuth)', claudeQuotas, 'claude');
         }
     }
 
@@ -211,6 +292,14 @@ function buildTooltipSVG(data: any): string {
             <linearGradient id="name-grad" x1="0%" y1="0%" x2="100%" y2="0%">
                 <stop offset="0%" style="stop-color:#b388ff;stop-opacity:1" />
                 <stop offset="100%" style="stop-color:#ce93d8;stop-opacity:1" />
+            </linearGradient>
+            <linearGradient id="ag-header-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" style="stop-color:#ff8a65;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#4fc3f7;stop-opacity:1" />
+            </linearGradient>
+            <linearGradient id="codex-header-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" style="stop-color:#7e57c2;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#42a5f5;stop-opacity:1" />
             </linearGradient>
             <linearGradient id="row-grad" x1="0%" y1="0%" x2="100%" y2="0%">
                 <stop offset="0%" style="stop-color:#ffffff;stop-opacity:0.04" />
@@ -236,7 +325,8 @@ function refreshStatusBar() {
     // 1. Antigravity Groups
     if (latestQuotaData.antigravity?.quotas) {
         groupsText += GROUPS.map(g => {
-            const members = latestQuotaData.antigravity.quotas.filter((q: any) => g.models.includes(q.label));
+            if (!isGroupVisible(g.id)) return '';
+            const members = latestQuotaData.antigravity.quotas.filter((q: any) => g.match(q.label));
             if (members.length === 0) return '';
             const avg = members.reduce((acc: number, curr: any) => acc + curr.remaining, 0) / members.length;
             const short = g.id === 'g1' ? 'Pro' : (g.id === 'g2' ? 'Flash' : 'C/G');
@@ -246,7 +336,7 @@ function refreshStatusBar() {
     }
 
     // 2. Codex Quota
-    if (latestQuotaData.codex) {
+    if (latestQuotaData.codex && isGroupVisible('codex')) {
         const codexParts = [];
         if (latestQuotaData.codex.primary && !latestQuotaData.codex.primary.outdated) {
             const p = latestQuotaData.codex.primary;
@@ -262,6 +352,24 @@ function refreshStatusBar() {
         }
         if (codexParts.length > 0) {
             groupsText += (groupsText ? '  |  ' : '') + codexParts.join('  |  ');
+        }
+    }
+
+    // 3. Claude Quota
+    if (latestQuotaData.claude && isGroupVisible('claude')) {
+        const claudeParts = [];
+        if (latestQuotaData.claude.session) {
+            const pct = Math.round(latestQuotaData.claude.session.pctUsed * 100);
+            const dot = pct < 80 ? '🟠' : '🔴';
+            claudeParts.push(`${dot} CL5H ${pct}%`);
+        }
+        if (latestQuotaData.claude.weekly) {
+            const pct = Math.round(latestQuotaData.claude.weekly.pctUsed * 100);
+            const dot = pct < 80 ? '🟠' : '🔴';
+            claudeParts.push(`${dot} CLW ${pct}%`);
+        }
+        if (claudeParts.length > 0) {
+            groupsText += (groupsText ? '  |  ' : '') + claudeParts.join('  |  ');
         }
     }
 
@@ -285,7 +393,8 @@ export function setLatestData(data: any) {
     refreshStatusBar();
     if (globalSidebarProvider && data) {
         const autoStatus = automationService ? automationService.dumpDiagnostics() : {};
-        globalSidebarProvider.syncToWebview({ ...data, autoClick: autoStatus });
+        const visibility = globalContext?.globalState.get<any>('statusBarVisibility') || {};
+        globalSidebarProvider.syncToWebview({ ...data, autoClick: autoStatus, visibility });
     }
     // [V10] Check for low quotas
     checkNotifications(data);
@@ -309,7 +418,7 @@ function checkNotifications(data: any) {
     if (!data.antigravity?.quotas) return;
 
     GROUPS.forEach(group => {
-        const members = data.antigravity.quotas.filter((q: any) => group.models.includes(q.label));
+        const members = data.antigravity.quotas.filter((q: any) => group.match(q.label));
         if (members.length === 0) return;
 
         // Group avg remaining
