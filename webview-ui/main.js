@@ -12,12 +12,13 @@ window.addEventListener('DOMContentLoaded', () => {
 
 window.addEventListener("message", (event) => {
     const message = event.data;
+    console.log('[SQM] Webview received message:', message.type, message.data ? 'with data' : 'no data');
     switch (message.type) {
         case "update":
             renderDashboard(message.data);
             break;
         case "loading":
-            // Don't clear UI, just show a subtle loading if needed
+            console.log('[SQM] Webview state: loading');
             break;
     }
 });
@@ -46,151 +47,157 @@ document.getElementById('lang-select').addEventListener('change', (e) => {
 
 // [MODIFIED] renderDashboard: data is now DashboardData {antigravity, claude, codex}
 function renderDashboard(data) {
-    window._lastDashboardData = data; // Cache for locale re-render
-    if (!data) {
-        document.getElementById('user-info').innerHTML = '';
-        document.getElementById('quota-list').innerHTML = `<p class="error-msg">${t('error.noServer')}</p>`;
-        return;
-    }
+    console.log('[SQM] Entering renderDashboard', !!data);
+    try {
+        window._lastDashboardData = data;
+        if (!data) {
+            document.getElementById('user-info').innerHTML = '';
+            document.getElementById('quota-list').innerHTML = `<p class="error-msg">${t('error.noServer')}</p>`;
+            return;
+        }
 
-    // --- Antigravity user card ---
-    const ag = data.antigravity;
-    if (ag) {
-        document.getElementById('user-info').innerHTML = `
-            <div class="user-card">
-                <div class="avatar">${ag.name.charAt(0)}</div>
-                <div class="user-details">
-                    <div class="user-name">${ag.name}</div>
-                    <div class="user-sub">${ag.tier} • ${ag.email}</div>
+        const ag = data.antigravity;
+        if (ag && ag.name) {
+            document.getElementById('user-info').innerHTML = `
+                <div class="user-card">
+                    <div class="avatar">${ag.name.charAt(0)}</div>
+                    <div class="user-details">
+                        <div class="user-name">${ag.name}</div>
+                        <div class="user-sub">${ag.tier || 'User'} • ${ag.email || ''}</div>
+                    </div>
                 </div>
-            </div>
-        `;
-    } else {
-        document.getElementById('user-info').innerHTML = '';
-    }
-
-    // --- Render all service groups ---
-    let html = '';
-    const visibility = data.visibility || {};
-
-    if (ag && ag.quotas) {
-        const GROUPS_CONFIG = [
-            { id: 'g1', title: 'PRO MODELS', match: (l) => l.includes('Gemini 3.1 Pro') },
-            { id: 'g2', title: 'FLASH MODELS', match: (l) => l.includes('Gemini 3 Flash') || (l.includes('Flash') && l.includes('Gemini')) },
-            { id: 'g3', title: 'CLAUDE MODELS', match: (l) => l.includes('Claude') || l.includes('GPT') }
-        ];
-
-        GROUPS_CONFIG.forEach(group => {
-            const groupQuotas = ag.quotas.filter(q => group.match(q.label));
-            if (groupQuotas.length > 0) {
-                html += renderServiceGroup(group.title, {
-                    ...ag,
-                    quotas: groupQuotas
-                }, group.id, visibility[group.id] !== false);
-            }
-        });
-    }
-
-    if (data.codex) {
-        const codexQuotas = [];
-        if (data.codex.primary && !data.codex.primary.outdated) {
-            const p = data.codex.primary;
-            const remaining = 100 - p.used_percent;
-            codexQuotas.push({
-                remaining,
-                direction: 'down',
-                resetTime: new Date(p.reset_time).toLocaleString(),
-                label: '5-Hour Session',
-                style: 'fluid',
-                themeColor: '#10b981', // Green
-                displayValue: `${Math.round(remaining)}%`
-            });
+            `;
+        } else {
+            document.getElementById('user-info').innerHTML = '';
         }
-        if (data.codex.secondary && !data.codex.secondary.outdated) {
-            const s = data.codex.secondary;
-            const remaining = 100 - s.used_percent;
-            codexQuotas.push({
-                remaining,
-                direction: 'down',
-                resetTime: new Date(s.reset_time).toLocaleString(),
-                label: 'Weekly Limit',
-                style: 'fluid',
-                themeColor: '#10b981', // Green
-                displayValue: `${Math.round(remaining)}%`
-            });
-        }
-        if (codexQuotas.length > 0) {
-            html += renderServiceGroup('CODEX (ChatGPT)', {
-                tier: 'Live Usage Monitor',
-                email: 'codex-ratelimit',
-                quotas: codexQuotas,
-                isAuthenticated: true
-            }, 'codex', visibility['codex'] !== false);
-        }
-    }
 
-    if (data.claude) {
-        try {
-            const claudeQuotas = [];
-            const now = new Date();
-            if (data.claude.session && data.claude.session.resetAt) {
-                const rDate = new Date(data.claude.session.resetAt);
-                const diffMs = rDate.getTime() - now.getTime();
-                let countdown = 'Ready';
-                if (diffMs > 0) {
-                    const mins = Math.floor(diffMs / 60000);
-                    countdown = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+        // --- Render all service groups ---
+        let html = '';
+        const state = vscode.getState() || {};
+        const collapsed = state.collapsed || {};
+        const visibility = data.visibility || {};
+
+        if (ag && ag.quotas) {
+            const GROUPS_CONFIG = [
+                { id: 'g1', title: 'PRO MODELS', match: (l) => l.includes('Gemini 3.1 Pro') },
+                { id: 'g2', title: 'FLASH MODELS', match: (l) => l.includes('Gemini 3 Flash') || (l.includes('Flash') && l.includes('Gemini')) },
+                { id: 'g3', title: 'CLAUDE MODELS', match: (l) => l.includes('Claude') || l.includes('GPT') }
+            ];
+
+            GROUPS_CONFIG.forEach(group => {
+                const groupQuotas = ag.quotas.filter(q => group.match(q.label));
+                if (groupQuotas.length > 0) {
+                    html += renderServiceGroup(group.title, {
+                        ...ag,
+                        quotas: groupQuotas
+                    }, group.id, visibility[group.id] !== false, collapsed[group.id] === true);
                 }
+            });
+        }
 
-                claudeQuotas.push({
-                    remaining: (data.claude.session.pctUsed || 0) * 100,
-                    direction: 'up',
-                    resetTime: countdown,
+        if (data.codex) {
+            const codexQuotas = [];
+            if (data.codex.primary && !data.codex.primary.outdated) {
+                const p = data.codex.primary;
+                const remaining = 100 - p.used_percent;
+                codexQuotas.push({
+                    remaining,
+                    direction: 'down',
+                    resetTime: new Date(p.reset_time).toLocaleString(),
                     label: '5-Hour Session',
                     style: 'fluid',
-                    themeColor: '#D97757', // Claude Orange
-                    displayValue: `${Math.round((data.claude.session.pctUsed || 0) * 100)}%`
+                    themeColor: '#10b981', // Green
+                    displayValue: `${Math.round(remaining)}%`
                 });
             }
-            if (data.claude.weekly && data.claude.weekly.resetAt) {
-                const rDate = new Date(data.claude.weekly.resetAt);
-                const diffMs = rDate.getTime() - now.getTime();
-                let countdown = 'Ready';
-                if (diffMs > 0) {
-                    const mins = Math.floor(diffMs / 60000);
-                    countdown = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
-                }
-
-                claudeQuotas.push({
-                    remaining: (data.claude.weekly.pctUsed || 0) * 100,
-                    direction: 'up',
-                    resetTime: countdown,
+            if (data.codex.secondary && !data.codex.secondary.outdated) {
+                const s = data.codex.secondary;
+                const remaining = 100 - s.used_percent;
+                codexQuotas.push({
+                    remaining,
+                    direction: 'down',
+                    resetTime: new Date(s.reset_time).toLocaleString(),
                     label: 'Weekly Limit',
                     style: 'fluid',
-                    themeColor: '#D97757', // Claude Orange
-                    displayValue: `${Math.round((data.claude.weekly.pctUsed || 0) * 100)}%`
+                    themeColor: '#10b981', // Green
+                    displayValue: `${Math.round(remaining)}%`
                 });
             }
-            if (claudeQuotas.length > 0) {
-                html += renderServiceGroup('CLAUDE (OAuth)', {
-                    tier: data.claude.subscriptionType || 'Pro',
-                    email: 'Claude Quota API',
-                    quotas: claudeQuotas,
+            if (codexQuotas.length > 0) {
+                html += renderServiceGroup('CODEX (ChatGPT)', {
+                    tier: 'Live Usage Monitor',
+                    email: 'codex-ratelimit',
+                    quotas: codexQuotas,
                     isAuthenticated: true
-                }, 'claude', visibility['claude'] !== false);
+                }, 'codex', visibility['codex'] !== false, collapsed['codex'] === true);
             }
-        } catch (e) {
-            console.error('[SQM] Error rendering Claude section:', e);
         }
-    }
 
-    document.getElementById('quota-list').innerHTML = html;
+        if (data.claude) {
+            try {
+                const claudeQuotas = [];
+                const now = new Date();
+                if (data.claude.session && data.claude.session.resetAt) {
+                    const rDate = new Date(data.claude.session.resetAt);
+                    const diffMs = rDate.getTime() - now.getTime();
+                    let countdown = 'Ready';
+                    if (diffMs > 0) {
+                        const mins = Math.floor(diffMs / 60000);
+                        countdown = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+                    }
 
-    if (data.antigravity && data.antigravity.autoClick) {
-        renderAutoClick(data.antigravity.autoClick);
-    }
-    if (data.autoClick) {
-        renderAutoClick(data.autoClick);
+                    claudeQuotas.push({
+                        remaining: (data.claude.session.pctUsed || 0) * 100,
+                        direction: 'up',
+                        resetTime: countdown,
+                        label: '5-Hour Session',
+                        style: 'fluid',
+                        themeColor: '#D97757', // Claude Orange
+                        displayValue: `${Math.round((data.claude.session.pctUsed || 0) * 100)}%`
+                    });
+                }
+                if (data.claude.weekly && data.claude.weekly.resetAt) {
+                    const rDate = new Date(data.claude.weekly.resetAt);
+                    const diffMs = rDate.getTime() - now.getTime();
+                    let countdown = 'Ready';
+                    if (diffMs > 0) {
+                        const mins = Math.floor(diffMs / 60000);
+                        countdown = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+                    }
+
+                    claudeQuotas.push({
+                        remaining: (data.claude.weekly.pctUsed || 0) * 100,
+                        direction: 'up',
+                        resetTime: countdown,
+                        label: 'Weekly Limit',
+                        style: 'fluid',
+                        themeColor: '#D97757', // Claude Orange
+                        displayValue: `${Math.round((data.claude.weekly.pctUsed || 0) * 100)}%`
+                    });
+                }
+                if (claudeQuotas.length > 0) {
+                    html += renderServiceGroup('CLAUDE (OAuth)', {
+                        tier: data.claude.subscriptionType || 'Pro',
+                        email: 'Claude Quota API',
+                        quotas: claudeQuotas,
+                        isAuthenticated: true
+                    }, 'claude', visibility['claude'] !== false, collapsed['claude'] === true);
+                }
+            } catch (e) {
+                console.error('[SQM] Error rendering Claude section:', e);
+            }
+        }
+
+        document.getElementById('quota-list').innerHTML = html;
+
+        if (data.antigravity && data.antigravity.autoClick) {
+            renderAutoClick(data.antigravity.autoClick);
+        }
+        if (data.autoClick) {
+            renderAutoClick(data.autoClick);
+        }
+    } catch (globalError) {
+        console.error('[SQM] Critical Dashboard Render Error:', globalError);
     }
 }
 
@@ -205,7 +212,7 @@ function getHexColor(pct, direction) {
     }
 }
 
-function renderServiceGroup(title, status, groupId, isVisible) {
+function renderServiceGroup(title, status, groupId, isVisible, isCollapsed) {
     if (!status) { return ''; }
 
     const isAuthenticated = status.isAuthenticated !== false;
@@ -219,36 +226,54 @@ function renderServiceGroup(title, status, groupId, isVisible) {
     // Determine branded class
     let brandClass = '';
     const upperTitle = title.toUpperCase();
-    // Include CLAUDE MODELS but exclude CLAUDE (OAUTH) from special AG branding if needed
-    // However, user said "Claude này thuộc về Antigravity nên là dùng 3 màu như gemini"
-    // He means the group with Sonnet 4.6, Opus 4.6.
     if (upperTitle.includes('PRO') || upperTitle.includes('FLASH') || (upperTitle.includes('CLAUDE') && !upperTitle.includes('OAUTH'))) {
         brandClass = 'antigravity';
     }
     else if (upperTitle.includes('CODEX')) brandClass = 'codex';
     else if (upperTitle.includes('CLAUDE')) brandClass = 'claude';
 
-    // Visibility Icon
+    // Icons
     const eyeIcon = isVisible ? '👁️' : '🕶️';
+    const eyeTitle = isVisible ? 'Visible on Status Bar' : 'Hidden on Status Bar';
     const hiddenClass = isVisible ? '' : 'hidden-state';
+    const chevronIcon = '▼';
 
     return `
-        <div class="service-group">
+        <div class="service-group ${isCollapsed ? 'collapsed' : ''}" data-group-id="${groupId}">
             <div class="row-header">
-                <div class="group-header ${brandClass}">${title}</div>
-                <span class="visibility-btn ${hiddenClass}" 
-                      onclick="toggleGroupVisibility('${groupId}')" 
-                      title="Toggle Status Bar Visibility">
-                    ${eyeIcon}
-                </span>
+                <div class="header-left" onclick="toggleGroupCollapse('${groupId}')">
+                    <span class="chevron">${chevronIcon}</span>
+                    <div class="group-header ${brandClass}">${title}</div>
+                </div>
+                <div class="header-right">
+                    <span class="visibility-btn ${hiddenClass}" 
+                        onclick="toggleGroupVisibility(event, '${groupId}')" 
+                        title="${eyeTitle}">
+                        ${eyeIcon}
+                    </span>
+                </div>
             </div>
-            ${itemsHtml}
+            <div class="group-content">
+                ${itemsHtml}
+            </div>
         </div>
     `;
 }
 
-window.toggleGroupVisibility = function (groupId) {
+window.toggleGroupVisibility = function (event, groupId) {
+    event.stopPropagation(); // Don't trigger accordion toggle
     vscode.postMessage({ type: 'onToggleVisibility', groupId });
+};
+
+window.toggleGroupCollapse = function (groupId) {
+    const state = vscode.getState() || {};
+    const collapsed = state.collapsed || {};
+    collapsed[groupId] = !collapsed[groupId];
+    state.collapsed = collapsed;
+    vscode.setState(state);
+
+    // Re-render with existing data
+    if (window._lastDashboardData) renderDashboard(window._lastDashboardData);
 };
 
 function renderAutoClick(config) {
@@ -324,9 +349,10 @@ function renderAutoClick(config) {
 
 function formatTime(t) {
     if (!t) return '';
-    const hMatch = t.match(/(\d+)h/);
-    const mMatch = t.match(/(\d+)m/);
-    if (!hMatch && !mMatch) return t;
+    const s = String(t);
+    const hMatch = s.match(/(\d+)h/);
+    const mMatch = s.match(/(\d+)m/);
+    if (!hMatch && !mMatch) return s;
     let h = hMatch ? parseInt(hMatch[1]) : 0;
     let m = mMatch ? parseInt(mMatch[1]) : 0;
     if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h ${m}m`;
@@ -337,15 +363,16 @@ function createModelCard(quota) {
     const pct = Math.round(quota.remaining);
     const color = quota.themeColor || '#40c4ff';
     const displayVal = quota.displayValue !== undefined ? quota.displayValue : `${pct}%`;
+    const rTime = quota.resetTime || quota.reset_time || '';
 
     return `
         <div class="model-card">
             <div class="card-header">
                 <span class="model-name">${shortLabel(quota.label)}</span>
-                <span class="model-time">${formatTime(quota.resetTime)}</span>
+                <span class="model-time">${formatTime(rTime)}</span>
             </div>
             <div class="hp-track">
-                <div class="hp-fill" style="width: ${pct}%; background: ${color}; box-shadow: 0 0 10px ${color}66;">
+                <div class="hp-fill" style="width: ${pct}%; background: ${color}; box-shadow: 0 0 8px ${color}44;">
                     <span class="hp-pct">${displayVal}</span>
                 </div>
             </div>
@@ -365,5 +392,52 @@ function shortLabel(label) {
         .replace(' (Thinking)', ' 🧠')
         .replace(' (High)', '↑')
         .replace(' (Low)', '↓')
-        .replace(' (Medium)', '');
+        .replace(' (Medium)', '')
+        .replace('5-Hour Session', '5H-Session')
+        .replace('Weekly Limit', 'Weekly');
+}
+
+const TRANSLATIONS = {
+    en: {
+        'dashboard.title': 'Quota Dashboard',
+        'btn.refresh': 'Refresh',
+        'loading': 'Establishing connection...',
+        'error.noServer': 'Connection to extension server failed.',
+        'automation.title': 'Automation Suite',
+        'automation.masterSwitch': 'Master System Power',
+        'automation.statusActive': 'Active',
+        'automation.statusIdle': 'Idle',
+        'automation.statusPaused': 'System Off',
+        'rule.Run': 'Auto-Run',
+        'rule.Allow': 'Auto-Allow',
+        'rule.Accept': 'Auto-Accept',
+        'rule.AlwaysAllow': 'Default Allow',
+        'rule.Retry': 'Auto-Retry',
+        'rule.KeepWaiting': 'Auto-Wait',
+        'rule.AcceptAll': 'Full Accept'
+    },
+    vi: {
+        'dashboard.title': 'Bảng điều khiển Quota',
+        'btn.refresh': 'Làm mới',
+        'loading': 'Đang kết nối...',
+        'error.noServer': 'Không thể kết nối với server extension.',
+        'automation.title': 'Bộ Tự Động Hóa',
+        'automation.masterSwitch': 'Công tắc Tổng',
+        'automation.statusActive': 'Đang chạy',
+        'automation.statusIdle': 'Sẵn sàng',
+        'automation.statusPaused': 'Tạm dừng',
+        'rule.Run': 'Tự chạy',
+        'rule.Allow': 'Tự cho phép',
+        'rule.Accept': 'Tự chấp nhận',
+        'rule.AlwaysAllow': 'Luôn cho phép',
+        'rule.Retry': 'Tự thử lại',
+        'rule.KeepWaiting': 'Tiếp tục chờ',
+        'rule.AcceptAll': 'Chấp nhận tất'
+    }
+};
+
+function t(key) {
+    const locale = window.LOCALE || 'en';
+    const bundle = TRANSLATIONS[locale] || TRANSLATIONS['en'];
+    return bundle[key] || key;
 }
