@@ -1,5 +1,11 @@
 # Changelog - Antigravity-Codex-Claude Monitor
 
+## [1.5.0] - 2026-08-26
+- **Unified Quota Engine:** Full support for 5-Hour Session and Weekly Limit across all Antigravity, Claude and Codex models.
+- **Consolidated Model Groups:** Streamlined into Gemini Models (Pro & Flash), Claude (Antigravity), Codex (ChatGPT), and Claude (OAuth).
+- **Sleek Bento Dashboard:** Redesigned UI with modern obsidian glass cards, fluid gradient bars, and a 3-column Automation Matrix.
+- **Status Bar & Tooltip Overhaul:** Concise status bar (`Gemini | AG-Claude | Codex`) and refreshed Bento-style SVG tooltip.
+
 ## [1.4.0] - 2026-04-11
 - **Claude (OAuth) Integration:** Monitor official Claude account quotas via integrated OAuth support.
 - **Master Grouping:** Organized the Antigravity ecosystem into a unified Master group with professional hierarchy.
