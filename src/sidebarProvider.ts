@@ -70,20 +70,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </head>
             <body>
                 <div id="app">
-                    <div class="header">
-                        <h1>Quota Dashboard</h1>
-                        <div style="display:flex;align-items:center;gap:6px;">
-                            <select id="lang-select" title="Language">
-                                <option value="en">EN</option>
-                                <option value="vi">VI</option>
-                            </select>
-                            <button id="refresh-btn">Refresh</button>
-                        </div>
-                    </div>
-                    <div id="user-info"></div>
-                    <div id="quota-list">
-                        <p class="loading">Establishing connection...</p>
-                    </div>
+                    <p class="loading">Establishing connection...</p>
                 </div>
                 <script src="${i18nUri}"></script>
                 <script src="${scriptUri}"></script>

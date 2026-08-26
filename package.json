@@ -44,6 +44,10 @@
         },
         "commands": [
             {
+                "command": "sqm.openDashboard",
+                "title": "AG Manager: Open Dashboard"
+            },
+            {
                 "command": "sqm.refresh",
                 "title": "AG Manager: Refresh Quotas",
                 "icon": "$(refresh)"

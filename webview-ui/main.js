@@ -1,24 +1,27 @@
 const vscode = acquireVsCodeApi();
 const state = vscode.getState() || {};
 
-// Initialize locale from persisted state
-window.LOCALE = state.locale || 'en';
-
-// Restore dropdown selection to match persisted locale
-window.addEventListener('DOMContentLoaded', () => {
-    const sel = document.getElementById('lang-select');
-    if (sel) sel.value = window.LOCALE;
-});
+// Initialize locale from persisted state or window.LOCALE
+if (state.locale) {
+    window.LOCALE = state.locale;
+}
 
 window.addEventListener("message", (event) => {
     const message = event.data;
-    console.log('[SQM] Webview received message:', message.type, message.data ? 'with data' : 'no data');
     switch (message.type) {
         case "update":
-            renderDashboard(message.data);
+            if (message.data) {
+                renderDashboard(message.data);
+            }
             break;
         case "loading":
-            console.log('[SQM] Webview state: loading');
+            // Keep existing UI if we already rendered
+            if (!window._hasRendered) {
+                const app = document.getElementById('app');
+                if (app) {
+                    app.innerHTML = `<p class="loading">${typeof window.t === 'function' ? window.t('loading') : 'Establishing connection...'}</p>`;
+                }
+            }
             break;
     }
 });
@@ -26,76 +29,122 @@ window.addEventListener("message", (event) => {
 // Request initial data immediately on load
 vscode.postMessage({ type: "onRefresh" });
 
-document.getElementById('refresh-btn').addEventListener('click', () => {
-    document.getElementById('quota-list').innerHTML = `<div class="loading">${t('loading')}</div>`;
-    vscode.postMessage({ type: 'onRefresh' });
-});
+function formatDisplayTime(t) {
+    if (!t || t === 'Ready') return t || '';
+    const s = String(t);
+    try {
+        const d = new Date(s);
+        if (!isNaN(d.getTime())) {
+            const m = d.getMonth() + 1;
+            const day = d.getDate();
+            let hours = d.getHours();
+            const mins = d.getMinutes().toString().padStart(2, '0');
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            hours = hours % 12;
+            hours = hours ? hours : 12;
+            return `${m}/${day}, ${hours}:${mins} ${ampm}`;
+        }
+    } catch { }
 
-// Language switcher
-document.getElementById('lang-select').addEventListener('change', (e) => {
-    window.LOCALE = e.target.value;
-    const newState = vscode.getState() || {};
-    newState.locale = window.LOCALE;
-    vscode.setState(newState);
-    // Re-render with cached data if any
-    const cachedData = window._lastDashboardData;
-    if (cachedData) renderDashboard(cachedData);
-    // Also update static elements
-    document.getElementById('refresh-btn').textContent = t('btn.refresh');
-    document.querySelector('.header h1').textContent = t('dashboard.title');
-});
+    const hMatch = s.match(/^(\d+)h\s*(\d+)?m?$/);
+    if (hMatch) {
+        let h = parseInt(hMatch[1]);
+        let m = hMatch[2] ? parseInt(hMatch[2]) : 0;
+        if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h ${m}m`;
+        return `0d ${h}h ${m}m`;
+    }
 
-// [MODIFIED] renderDashboard: data is now DashboardData {antigravity, claude, codex}
+    return s;
+}
+
 function renderDashboard(data) {
-    console.log('[SQM] Entering renderDashboard', !!data);
     try {
         window._lastDashboardData = data;
+        window._hasRendered = true;
+        const app = document.getElementById('app');
+        if (!app) return;
+
         if (!data) {
-            document.getElementById('user-info').innerHTML = '';
-            document.getElementById('quota-list').innerHTML = `<p class="error-msg">${t('error.noServer')}</p>`;
+            app.innerHTML = `<p class="error-msg">${typeof window.t === 'function' ? window.t('error.noServer') : 'No server connection'}</p>`;
             return;
         }
 
-        // User info now moved inside Antigravity group
-        document.getElementById('user-info').innerHTML = '';
-
-        // --- Render all service groups ---
-        let html = '';
-        const state = vscode.getState() || {};
-        const collapsed = state.collapsed || {};
         const visibility = data.visibility || {};
-
         const ag = data.antigravity;
-        if (ag && ag.name) {
-            let agSubHtml = `
-                <div class="user-card" style="margin-bottom:10px; background:rgba(255,255,255,0.03);">
-                    <div class="avatar" style="width:24px; height:24px; font-size:10px; line-height:24px;">${ag.name.charAt(0)}</div>
-                    <div class="user-details">
-                        <div class="user-name" style="font-size:11px;">${ag.name}</div>
-                        <div class="user-sub" style="font-size:9px;">${ag.tier || 'User'} • ${ag.email || ''}</div>
+        const userName = ag?.name || 'Vĩnh Phú Bùi';
+        const userTier = ag?.tier || 'Google AI Pro';
+        const avatarLetter = userName.charAt(0).toUpperCase();
+
+        let html = '';
+
+        // 1. User Profile Panel
+        html += `
+            <div class="user-panel">
+                <div class="user-info-left">
+                    <div class="avatar-glow">${avatarLetter}</div>
+                    <div class="user-meta">
+                        <span class="user-name">${userName}</span>
+                        <span class="user-tier-badge">✨ ${userTier}</span>
                     </div>
                 </div>
-            `;
+                <div class="header-actions">
+                    <select id="lang-select">
+                        <option value="en" ${window.LOCALE === 'en' ? 'selected' : ''}>EN</option>
+                        <option value="vi" ${window.LOCALE === 'vi' ? 'selected' : ''}>VI</option>
+                    </select>
+                    <button class="icon-btn" id="refresh-btn" title="Refresh">↻</button>
+                </div>
+            </div>
+        `;
 
-            const GROUPS_CONFIG = [
-                { id: 'g1', title: 'PRO MODELS', match: (l) => l.includes('Gemini 3.1 Pro') },
-                { id: 'g2', title: 'FLASH MODELS', match: (l) => l.includes('Gemini 3 Flash') || (l.includes('Flash') && l.includes('Gemini')) },
-                { id: 'g3', title: 'CLAUDE MODELS', match: (l) => l.includes('Claude') || l.includes('GPT') }
-            ];
+        html += '<div id="quota-list">';
 
-            GROUPS_CONFIG.forEach(group => {
-                const groupQuotas = ag.quotas.filter(q => group.match(q.label));
-                if (groupQuotas.length > 0) {
-                    agSubHtml += renderServiceGroup(group.title, {
-                        ...ag,
-                        quotas: groupQuotas
-                    }, group.id, visibility[group.id] !== false, collapsed[group.id] === true);
+        // 2. Bento Card: GEMINI MODELS (Pro & Flash)
+        if (ag?.quotas) {
+            const geminiQuotas = ag.quotas.filter(q => q.groupId === 'g1' || q.groupId === 'g2' || q.label?.includes('Pro') || q.label?.includes('Flash'));
+            const uniqueGemini = [];
+            const seenLabels = new Set();
+            geminiQuotas.forEach(q => {
+                if (!seenLabels.has(q.label)) {
+                    seenLabels.add(q.label);
+                    uniqueGemini.push(q);
                 }
             });
 
-            html += renderServiceGroup('ANTIGRAVITY', agSubHtml, 'ag-master', visibility['ag-master'] !== false, collapsed['ag-master'] === true, true);
+            if (uniqueGemini.length > 0) {
+                const isVis = visibility['g1'] !== false || visibility['g2'] !== false;
+                html += renderBentoCard({
+                    cardClass: 'gemini',
+                    title: 'Gemini Models',
+                    subtitle: '(Pro & Flash)',
+                    dotClass: 'dot-gemini',
+                    tagClass: 'tag-gemini',
+                    fillClass: 'fill-gemini',
+                    quotas: uniqueGemini,
+                    groupId: 'g1',
+                    isVisible: isVis
+                });
+            }
+
+            // 3. Bento Card: CLAUDE (Antigravity)
+            const claudeAgQuotas = ag.quotas.filter(q => q.groupId === 'g3' || q.label?.includes('Claude') || q.label?.includes('GPT'));
+            if (claudeAgQuotas.length > 0) {
+                const isVis = visibility['g3'] !== false;
+                html += renderBentoCard({
+                    cardClass: 'ag-claude',
+                    title: 'Claude (Antigravity)',
+                    subtitle: '(Thinking & GPT)',
+                    dotClass: 'dot-ag-claude',
+                    tagClass: 'tag-ag-claude',
+                    fillClass: 'fill-ag-claude',
+                    quotas: claudeAgQuotas,
+                    groupId: 'g3',
+                    isVisible: isVis
+                });
+            }
         }
 
+        // 4. Bento Card: CODEX (ChatGPT)
         if (data.codex) {
             const codexQuotas = [];
             if (data.codex.primary && !data.codex.primary.outdated) {
@@ -103,11 +152,8 @@ function renderDashboard(data) {
                 const remaining = 100 - p.used_percent;
                 codexQuotas.push({
                     remaining,
-                    direction: 'down',
-                    resetTime: new Date(p.reset_time).toLocaleString(),
+                    resetTime: p.reset_time ? new Date(p.reset_time).toLocaleString() : '',
                     label: '5-Hour Session',
-                    style: 'fluid',
-                    themeColor: '#10b981', // Green
                     displayValue: `${Math.round(remaining)}%`
                 });
             }
@@ -116,333 +162,245 @@ function renderDashboard(data) {
                 const remaining = 100 - s.used_percent;
                 codexQuotas.push({
                     remaining,
-                    direction: 'down',
-                    resetTime: new Date(s.reset_time).toLocaleString(),
+                    resetTime: s.reset_time ? new Date(s.reset_time).toLocaleString() : '',
                     label: 'Weekly Limit',
-                    style: 'fluid',
-                    themeColor: '#10b981', // Green
                     displayValue: `${Math.round(remaining)}%`
                 });
             }
             if (codexQuotas.length > 0) {
-                html += renderServiceGroup('CODEX (ChatGPT)', {
-                    tier: 'Live Usage Monitor',
-                    email: 'codex-ratelimit',
+                const isVis = visibility['codex'] !== false;
+                html += renderBentoCard({
+                    cardClass: 'codex',
+                    title: 'Codex (ChatGPT)',
+                    subtitle: '(Live Session)',
+                    dotClass: 'dot-codex',
+                    tagClass: 'tag-codex',
+                    fillClass: 'fill-codex',
                     quotas: codexQuotas,
-                    isAuthenticated: true
-                }, 'codex', visibility['codex'] !== false, collapsed['codex'] === true);
+                    groupId: 'codex',
+                    isVisible: isVis
+                });
             }
         }
 
+        // 5. Bento Card: CLAUDE (OAuth)
         if (data.claude) {
-            try {
-                const claudeQuotas = [];
-                const now = new Date();
-                if (data.claude.session && data.claude.session.resetAt) {
-                    const rDate = new Date(data.claude.session.resetAt);
-                    const diffMs = rDate.getTime() - now.getTime();
-                    let countdown = 'Ready';
-                    if (diffMs > 0) {
-                        const mins = Math.floor(diffMs / 60000);
-                        countdown = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
-                    }
-
-                    claudeQuotas.push({
-                        remaining: (data.claude.session.pctUsed || 0) * 100,
-                        direction: 'up',
-                        resetTime: countdown,
-                        label: '5-Hour Session',
-                        style: 'fluid',
-                        themeColor: '#D97757', // Claude Orange
-                        displayValue: `${Math.round((data.claude.session.pctUsed || 0) * 100)}%`
-                    });
-                }
-                if (data.claude.weekly && data.claude.weekly.resetAt) {
-                    const rDate = new Date(data.claude.weekly.resetAt);
-                    const diffMs = rDate.getTime() - now.getTime();
-                    let countdown = 'Ready';
-                    if (diffMs > 0) {
-                        const mins = Math.floor(diffMs / 60000);
-                        countdown = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
-                    }
-
-                    claudeQuotas.push({
-                        remaining: (data.claude.weekly.pctUsed || 0) * 100,
-                        direction: 'up',
-                        resetTime: countdown,
-                        label: 'Weekly Limit',
-                        style: 'fluid',
-                        themeColor: '#D97757', // Claude Orange
-                        displayValue: `${Math.round((data.claude.weekly.pctUsed || 0) * 100)}%`
-                    });
-                }
-                if (claudeQuotas.length > 0) {
-                    html += renderServiceGroup('CLAUDE (OAuth)', {
-                        tier: data.claude.subscriptionType || 'Pro',
-                        email: 'Claude Quota API',
-                        quotas: claudeQuotas,
-                        isAuthenticated: true
-                    }, 'claude', visibility['claude'] !== false, collapsed['claude'] === true);
-                }
-            } catch (e) {
-                console.error('[SQM] Error rendering Claude section:', e);
+            const claudeOAuthQuotas = [];
+            if (data.claude.session?.resetAt) {
+                const rDate = new Date(data.claude.session.resetAt);
+                claudeOAuthQuotas.push({
+                    remaining: (data.claude.session.pctUsed || 0) * 100,
+                    resetTime: rDate.toLocaleString(),
+                    label: '5-Hour Session',
+                    displayValue: `${Math.round((data.claude.session.pctUsed || 0) * 100)}%`
+                });
+            }
+            if (data.claude.weekly?.resetAt) {
+                const rDate = new Date(data.claude.weekly.resetAt);
+                claudeOAuthQuotas.push({
+                    remaining: (data.claude.weekly.pctUsed || 0) * 100,
+                    resetTime: rDate.toLocaleString(),
+                    label: 'Weekly Limit',
+                    displayValue: `${Math.round((data.claude.weekly.pctUsed || 0) * 100)}%`
+                });
+            }
+            if (claudeOAuthQuotas.length > 0) {
+                const isVis = visibility['claude'] !== false;
+                html += renderBentoCard({
+                    cardClass: 'claude-oauth',
+                    title: 'Claude (OAuth)',
+                    subtitle: '(Anthropic API)',
+                    dotClass: 'dot-claude-oauth',
+                    tagClass: 'tag-claude-oauth',
+                    fillClass: 'fill-claude-oauth',
+                    quotas: claudeOAuthQuotas,
+                    groupId: 'claude',
+                    isVisible: isVis
+                });
             }
         }
 
-        document.getElementById('quota-list').innerHTML = html;
+        html += '</div>'; // End quota-list
 
-        if (data.antigravity && data.antigravity.autoClick) {
-            renderAutoClick(data.antigravity.autoClick);
-        }
-        if (data.autoClick) {
-            renderAutoClick(data.autoClick);
-        }
+        // 6. Automation Suite Matrix
+        const autoConfig = data.autoClick || data.antigravity?.autoClick || { active: true, rules: [] };
+        html += renderAutomationMatrix(autoConfig);
+
+        app.innerHTML = html;
+
+        // Attach Event Listeners
+        attachEventListeners(autoConfig);
+
     } catch (globalError) {
-        console.error('[SQM] Critical Dashboard Render Error:', globalError);
+        console.error('[SQM] Dashboard Render Error:', globalError);
     }
 }
 
-function getHexColor(pct, direction) {
-    if (direction === 'up') {
-        if (pct < 80) return '#FFAB40';
-        return '#ef4444';
-    } else {
-        if (pct > 50) return '#10b981';
-        if (pct > 20) return '#f59e0b';
-        return '#ef4444';
-    }
-}
-
-function renderServiceGroup(title, statusOrHtml, groupId, isVisible, isCollapsed, isMaster = false) {
-    if (!statusOrHtml) { return ''; }
-
-    let itemsHtml = '';
-    if (typeof statusOrHtml === 'string') {
-        itemsHtml = statusOrHtml;
-    } else {
-        const isAuthenticated = statusOrHtml.isAuthenticated !== false;
-        if (isAuthenticated && statusOrHtml.quotas && statusOrHtml.quotas.length > 0) {
-            itemsHtml = `<div class="model-list">${statusOrHtml.quotas.map(q => createModelCard(q)).join('')}</div>`;
-        } else if (!isAuthenticated) {
-            itemsHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">🔒 ${statusOrHtml.email}</p>`;
-        }
-    }
-
-    // Determine branded class
-    let brandClass = '';
-    const upperTitle = title.toUpperCase();
-    if (isMaster || upperTitle.includes('PRO') || upperTitle.includes('FLASH') || (upperTitle.includes('CLAUDE') && !upperTitle.includes('OAUTH'))) {
-        brandClass = 'antigravity';
-    }
-    else if (upperTitle.includes('CODEX')) brandClass = 'codex';
-    else if (upperTitle.includes('CLAUDE')) brandClass = 'claude';
-
-    // Icons
+function renderBentoCard({ cardClass, title, subtitle, dotClass, tagClass, fillClass, quotas, groupId, isVisible }) {
     const eyeIcon = isVisible ? '👁️' : '🕶️';
-    const eyeTitle = isVisible ? 'Visible on Status Bar' : 'Hidden on Status Bar';
     const hiddenClass = isVisible ? '' : 'hidden-state';
-    const chevronIcon = '▼';
+    const eyeTitle = isVisible ? 'Visible on Status Bar' : 'Hidden on Status Bar';
+
+    const rowsHtml = quotas.map(q => {
+        const pct = Math.round(q.remaining || 0);
+        const displayVal = q.displayValue !== undefined ? q.displayValue : `${pct}%`;
+        const timeFormatted = formatDisplayTime(q.resetTime);
+
+        return `
+            <div class="quota-item">
+                <div class="quota-header-info">
+                    <span class="quota-label">${q.label}</span>
+                    <div class="quota-values">
+                        <span class="quota-pct">${displayVal}</span>
+                        <span class="quota-time">${timeFormatted}</span>
+                    </div>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill ${fillClass}" style="width: ${pct}%;"></div>
+                </div>
+            </div>
+        `;
+    }).join('');
 
     return `
-        <div class="service-group ${isCollapsed ? 'collapsed' : ''} ${isMaster ? 'master' : 'nested'}" data-group-id="${groupId}">
-            <div class="row-header">
-                <div class="header-left" onclick="toggleGroupCollapse('${groupId}')">
-                    <span class="chevron">${chevronIcon}</span>
-                    <div class="group-header ${brandClass}">${title}</div>
+        <div class="bento-card ${cardClass}" data-group-id="${groupId}">
+            <div class="card-title-row">
+                <div class="card-tag ${tagClass}">
+                    <span class="status-dot ${dotClass}"></span>
+                    <span>${title}</span>
+                    <span class="tag-sub">${subtitle}</span>
                 </div>
-                <div class="header-right">
-                    <span class="visibility-btn ${hiddenClass}" 
-                        onclick="toggleGroupVisibility(event, '${groupId}')" 
-                        title="${eyeTitle}">
-                        ${eyeIcon}
-                    </span>
-                </div>
+                <span class="card-visibility-btn ${hiddenClass}" 
+                    data-group-id="${groupId}"
+                    title="${eyeTitle}">
+                    ${eyeIcon}
+                </span>
             </div>
-            <div class="group-content">
-                ${itemsHtml}
+            <div class="quota-rows">
+                ${rowsHtml}
             </div>
         </div>
     `;
 }
 
-window.toggleGroupVisibility = function (event, groupId) {
-    event.stopPropagation(); // Don't trigger accordion toggle
-    vscode.postMessage({ type: 'onToggleVisibility', groupId });
-};
-
-window.toggleGroupCollapse = function (groupId) {
-    const state = vscode.getState() || {};
-    const collapsed = state.collapsed || {};
-    collapsed[groupId] = !collapsed[groupId];
-    state.collapsed = collapsed;
-    vscode.setState(state);
-
-    // Re-render with existing data
-    if (window._lastDashboardData) renderDashboard(window._lastDashboardData);
-};
-
-function renderAutoClick(config) {
-    let container = document.getElementById('automation-module');
-    if (!container) {
-        container = document.createElement('div');
-        container.id = 'automation-module';
-        container.className = 'automation-container';
-        document.getElementById('app').appendChild(container);
-    }
-
+function renderAutomationMatrix(config) {
+    const getLabel = (key, fallback) => (typeof window.t === 'function' ? window.t(key) : fallback);
     const rules = [
-        { id: 'Run', label: t('rule.Run') },
-        { id: 'Allow', label: t('rule.Allow') },
-        { id: 'Accept', label: t('rule.Accept') },
-        { id: 'Always Allow', label: t('rule.AlwaysAllow') },
-        { id: 'Retry', label: t('rule.Retry') },
-        { id: 'Keep Waiting', label: t('rule.KeepWaiting') },
-        { id: 'Accept all', label: t('rule.AcceptAll') }
+        { id: 'Run', label: getLabel('rule.Run', 'Running (Run)') },
+        { id: 'Allow', label: getLabel('rule.Allow', 'Permission (Allow)') },
+        { id: 'Accept', label: getLabel('rule.Accept', 'Accept') },
+        { id: 'Always Allow', label: getLabel('rule.AlwaysAllow', 'Always Allow') },
+        { id: 'Retry', label: getLabel('rule.Retry', 'Retry') },
+        { id: 'Keep Waiting', label: getLabel('rule.KeepWaiting', 'Skip Wait') },
+        { id: 'Accept all', label: getLabel('rule.AcceptAll', 'Accept All') }
     ];
 
-    container.innerHTML = `
-        <div class="section-title">${t('automation.title')}</div>
-        
-        <div class="power-row">
-            <span class="power-label">${t('automation.masterSwitch')}</span>
-            <label class="switch">
-                <input type="checkbox" id="master-power" ${config.active ? 'checked' : ''}>
-                <span class="slider"></span>
-            </label>
-        </div>
+    const rulesList = Array.isArray(config.rules) ? config.rules : [];
+    const isSystemOn = !!config.active;
 
-        <div class="automation-grid ${!config.active ? 'system-off' : ''}">
-            ${rules.map(rule => {
-        const rulesList = Array.isArray(config.rules) ? config.rules : [];
+    const chipsHtml = rules.map(rule => {
         const isRuleOn = rulesList.includes(rule.id);
-        const isActuallyActive = config.active && isRuleOn;
+        const isActuallyActive = isSystemOn && isRuleOn;
         return `
-                    <div class="automation-card ${isActuallyActive ? 'active' : ''} ${!config.active ? 'disabled' : ''}" data-rule="${rule.id}">
-                        <div class="glow-ring"></div>
-                        <div class="automation-label">${rule.label}</div>
-                        <div class="automation-status">${isActuallyActive ? t('automation.statusActive') : (config.active ? t('automation.statusIdle') : t('automation.statusPaused'))}</div>
-                    </div>
-                `;
-    }).join('')}
+            <div class="chip ${isActuallyActive ? 'active' : ''}" data-rule="${rule.id}" title="${rule.label}">
+                ${rule.label}
+            </div>
+        `;
+    }).join('');
+
+    const autoTitle = getLabel('automation.title', 'Automation Suite');
+
+    return `
+        <div class="automation-container">
+            <div class="auto-title-row">
+                <span class="auto-title">⚡ ${autoTitle}</span>
+                <div class="switch-wrapper">
+                    <label class="switch">
+                        <input type="checkbox" id="master-power" ${isSystemOn ? 'checked' : ''}>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="rule-chips ${!isSystemOn ? 'system-off' : ''}">
+                ${chipsHtml}
+            </div>
         </div>
     `;
+}
 
-    document.getElementById('master-power').addEventListener('change', (e) => {
-        vscode.postMessage({
-            type: 'onAutoClickChange',
-            config: { enabled: e.target.checked }
+function attachEventListeners(autoConfig) {
+    // Visibility Buttons (Toggle eye on/off)
+    document.querySelectorAll('.card-visibility-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const groupId = btn.getAttribute('data-group-id');
+            const isHidden = btn.classList.contains('hidden-state');
+            if (isHidden) {
+                btn.classList.remove('hidden-state');
+                btn.textContent = '👁️';
+                btn.title = 'Visible on Status Bar';
+            } else {
+                btn.classList.add('hidden-state');
+                btn.textContent = '🕶️';
+                btn.title = 'Hidden on Status Bar';
+            }
+            vscode.postMessage({ type: 'onToggleVisibility', groupId });
         });
     });
 
-    container.querySelectorAll('.automation-card').forEach(card => {
-        card.addEventListener('click', () => {
-            const ruleId = card.getAttribute('data-rule');
-            const rulesList = Array.isArray(config.rules) ? config.rules : [];
-            let currentRules = [...rulesList];
-            if (currentRules.includes(ruleId)) {
-                currentRules = currentRules.filter(r => r !== ruleId);
-            } else {
-                currentRules.push(ruleId);
+    // Refresh button
+    const refreshBtn = document.getElementById('refresh-btn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => {
+            vscode.postMessage({ type: 'onRefresh' });
+        });
+    }
+
+    // Language switch
+    const langSelect = document.getElementById('lang-select');
+    if (langSelect) {
+        langSelect.addEventListener('change', (e) => {
+            window.LOCALE = e.target.value;
+            const newState = vscode.getState() || {};
+            newState.locale = window.LOCALE;
+            vscode.setState(newState);
+            if (window._lastDashboardData) renderDashboard(window._lastDashboardData);
+        });
+    }
+
+    // Master Power Toggle
+    const masterPower = document.getElementById('master-power');
+    if (masterPower) {
+        masterPower.addEventListener('change', (e) => {
+            const isChecked = e.target.checked;
+            const matrix = document.querySelector('.rule-chips');
+            if (matrix) {
+                if (isChecked) {
+                    matrix.classList.remove('system-off');
+                } else {
+                    matrix.classList.add('system-off');
+                }
             }
             vscode.postMessage({
                 type: 'onAutoClickChange',
-                config: { rules: currentRules }
+                config: { enabled: isChecked }
+            });
+        });
+    }
+
+    // Rule Chips Toggle
+    document.querySelectorAll('.chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+            chip.classList.toggle('active');
+            const activeRules = [];
+            document.querySelectorAll('.chip.active').forEach(c => {
+                const r = c.getAttribute('data-rule');
+                if (r) activeRules.push(r);
+            });
+            vscode.postMessage({
+                type: 'onAutoClickChange',
+                config: { rules: activeRules }
             });
         });
     });
-}
-
-function formatTime(t) {
-    if (!t) return '';
-    const s = String(t);
-    const hMatch = s.match(/(\d+)h/);
-    const mMatch = s.match(/(\d+)m/);
-    if (!hMatch && !mMatch) return s;
-    let h = hMatch ? parseInt(hMatch[1]) : 0;
-    let m = mMatch ? parseInt(mMatch[1]) : 0;
-    if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h ${m}m`;
-    return `0d ${h}h ${m}m`;
-}
-
-function createModelCard(quota) {
-    const pct = Math.round(quota.remaining);
-    const color = quota.themeColor || '#40c4ff';
-    const displayVal = quota.displayValue !== undefined ? quota.displayValue : `${pct}%`;
-    const rTime = quota.resetTime || quota.reset_time || '';
-
-    return `
-        <div class="model-card">
-            <div class="card-header">
-                <span class="model-name">${shortLabel(quota.label)}</span>
-                <span class="model-time">${formatTime(rTime)}</span>
-            </div>
-            <div class="hp-track">
-                <div class="hp-fill" style="width: ${pct}%; background: ${color}; box-shadow: 0 0 8px ${color}44;">
-                    <span class="hp-pct">${displayVal}</span>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-function shortLabel(label) {
-    return label
-        .replace('Gemini 3.1', 'G3.1')
-        .replace('Gemini 3', 'G3')
-        .replace('Gemini 2', 'G2')
-        .replace('Claude Sonnet', 'Sonnet')
-        .replace('Claude Opus', 'Opus')
-        .replace('Claude Haiku', 'Haiku')
-        .replace('GPT-OSS', 'GPT')
-        .replace(' (Thinking)', ' 🧠')
-        .replace(' (High)', '↑')
-        .replace(' (Low)', '↓')
-        .replace(' (Medium)', '')
-        .replace('5-Hour Session', '5H-Session')
-        .replace('Weekly Limit', 'Weekly');
-}
-
-const TRANSLATIONS = {
-    en: {
-        'dashboard.title': 'Quota Dashboard',
-        'btn.refresh': 'Refresh',
-        'loading': 'Establishing connection...',
-        'error.noServer': 'Connection to extension server failed.',
-        'automation.title': 'Automation Suite',
-        'automation.masterSwitch': 'Master System Power',
-        'automation.statusActive': 'Active',
-        'automation.statusIdle': 'Idle',
-        'automation.statusPaused': 'System Off',
-        'rule.Run': 'Auto-Run',
-        'rule.Allow': 'Auto-Allow',
-        'rule.Accept': 'Auto-Accept',
-        'rule.AlwaysAllow': 'Default Allow',
-        'rule.Retry': 'Auto-Retry',
-        'rule.KeepWaiting': 'Auto-Wait',
-        'rule.AcceptAll': 'Full Accept'
-    },
-    vi: {
-        'dashboard.title': 'Bảng điều khiển Quota',
-        'btn.refresh': 'Làm mới',
-        'loading': 'Đang kết nối...',
-        'error.noServer': 'Không thể kết nối với server extension.',
-        'automation.title': 'Bộ Tự Động Hóa',
-        'automation.masterSwitch': 'Công tắc Tổng',
-        'automation.statusActive': 'Đang chạy',
-        'automation.statusIdle': 'Sẵn sàng',
-        'automation.statusPaused': 'Tạm dừng',
-        'rule.Run': 'Tự chạy',
-        'rule.Allow': 'Tự cho phép',
-        'rule.Accept': 'Tự chấp nhận',
-        'rule.AlwaysAllow': 'Luôn cho phép',
-        'rule.Retry': 'Tự thử lại',
-        'rule.KeepWaiting': 'Tiếp tục chờ',
-        'rule.AcceptAll': 'Chấp nhận tất'
-    }
-};
-
-function t(key) {
-    const locale = window.LOCALE || 'en';
-    const bundle = TRANSLATIONS[locale] || TRANSLATIONS['en'];
-    return bundle[key] || key;
 }

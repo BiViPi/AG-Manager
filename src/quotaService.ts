@@ -40,6 +40,7 @@ export interface QuotaInfo {
     // [ADDED] Render style and direction
     style?: 'segmented' | 'fluid';
     direction?: 'up' | 'down';
+    groupId?: string;
 }
 
 export interface UserStatus {
@@ -322,6 +323,7 @@ export async function getCodexRateLimitData(customPath?: string): Promise<{ foun
 }
 
 const API_PATH = '/exa.language_server_pb.LanguageServerService/GetUserStatus';
+const QUOTA_SUMMARY_PATH = '/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary';
 
 export class QuotaService {
     private serverInfo: { port: number, token: string } | null = null;
@@ -407,15 +409,11 @@ export class QuotaService {
         });
     }
 
-    async fetchStatus(): Promise<UserStatus | null> {
-        if (!this.serverInfo) {
-            const found = await this.discoverLocalServer();
-            if (!found) return null;
-        }
-
-        try {
+    private async requestApi(path: string): Promise<any> {
+        if (!this.serverInfo) return null;
+        return new Promise((resolve) => {
             const options = {
-                hostname: '127.0.0.1', port: this.serverInfo!.port, path: API_PATH, method: 'POST',
+                hostname: '127.0.0.1', port: this.serverInfo!.port, path, method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Codeium-Csrf-Token': this.serverInfo!.token,
@@ -423,74 +421,155 @@ export class QuotaService {
                 },
                 timeout: 5000
             };
-
-            return new Promise((resolve, reject) => {
-                const req = http.request(options, (res) => {
-                    let data = '';
-                    res.on('data', chunk => data += chunk);
-                    res.on('end', () => {
-                        if (res.statusCode === 200) {
-                            try { resolve(this.parseResponse(JSON.parse(data))); } catch (e) { reject(e); }
-                        } else { reject(new Error(`HTTP ${res.statusCode}`)); }
-                    });
+            const req = http.request(options, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                    if (res.statusCode === 200) {
+                        try { resolve(JSON.parse(data)); } catch { resolve(null); }
+                    } else { resolve(null); }
                 });
-                req.on('error', reject);
-                req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
-                req.write(JSON.stringify({ wrapper_data: {} }));
-                req.end();
             });
+            req.on('error', () => resolve(null));
+            req.on('timeout', () => { req.destroy(); resolve(null); });
+            req.write(JSON.stringify({ wrapper_data: {} }));
+            req.end();
+        });
+    }
+
+    async fetchStatus(): Promise<UserStatus | null> {
+        if (!this.serverInfo) {
+            const found = await this.discoverLocalServer();
+            if (!found) return null;
+        }
+
+        try {
+            const [statusResp, summaryResp] = await Promise.all([
+                this.requestApi(API_PATH),
+                this.requestApi(QUOTA_SUMMARY_PATH)
+            ]);
+
+            if (!statusResp && !summaryResp) {
+                this.serverInfo = null;
+                return null;
+            }
+
+            return this.parseResponse(statusResp, summaryResp);
         } catch (e) {
             this.serverInfo = null;
             return null;
         }
     }
 
-    private parseResponse(resp: any): UserStatus {
-        const user = resp.userStatus;
-        const modelConfigs = user?.cascadeModelConfigData?.clientModelConfigs || [];
-        const quotas: QuotaInfo[] = modelConfigs
-            .filter((m: any) => m.quotaInfo)
-            .map((m: any) => {
-                const resetTimeStr = m.quotaInfo.resetTime;
-                let resetLabel = 'Ready';
-                let absResetLabel = '';
-                if (resetTimeStr && resetTimeStr !== 'Ready') {
-                    const resetDate = new Date(resetTimeStr);
-                    const diffMs = resetDate.getTime() - new Date().getTime();
-                    if (diffMs > 0) {
-                        const mins = Math.floor(diffMs / 60000);
-                        resetLabel = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
-                        // Absolute time format: (13h00)
-                        const absHours = resetDate.getHours().toString().padStart(2, '0');
-                        const absMins = resetDate.getMinutes().toString().padStart(2, '0');
-                        absResetLabel = `(${absHours}h${absMins})`;
-                    } else { resetLabel = 'Refreshing...'; }
+    private parseResponse(statusResp: any, summaryResp?: any): UserStatus {
+        const user = statusResp?.userStatus;
+        const quotaGroups = summaryResp?.response?.groups || [];
+
+        const parseBucket = (bucket: any, groupId: string, themeColor: string): QuotaInfo | null => {
+            if (!bucket) return null;
+            const remaining = Math.round((bucket.remainingFraction || 0) * 100);
+            let resetTimeStr = 'Ready';
+            if (bucket.resetTime && bucket.resetTime !== 'Ready') {
+                try {
+                    const resetDate = new Date(bucket.resetTime);
+                    if (!isNaN(resetDate.getTime())) {
+                        resetTimeStr = resetDate.toLocaleString();
+                    }
+                } catch {
+                    resetTimeStr = bucket.resetTime;
                 }
-                return {
-                    label: m.label,
-                    remaining: (m.quotaInfo.remainingFraction || 0) * 100,
-                    resetTime: resetLabel,
-                    absResetTime: absResetLabel,
-                    themeColor: m.label.includes('Gemini') ? '#40C4FF' : (m.label.includes('Claude') ? '#FFAB40' : '#69F0AE')
-                };
-            });
+            }
+            const label = bucket.window === 'weekly' || bucket.displayName?.includes('Weekly') ? 'Weekly Limit' : '5-Hour Session';
+            return {
+                label,
+                remaining,
+                resetTime: resetTimeStr,
+                absResetTime: '',
+                themeColor,
+                displayValue: `${remaining}%`,
+                style: 'fluid',
+                direction: 'down',
+                groupId
+            };
+        };
 
-        const ORDER = [
-            'Gemini 3 Flash',
-            'Gemini 3.1 Pro (High)',
-            'Gemini 3.1 Pro (Low)',
-            'Claude Sonnet 4.6 (Thinking)',
-            'Claude Opus 4.6 (Thinking)',
-            'GPT-OSS 120B (Medium)'
-        ];
+        let quotas: QuotaInfo[] = [];
 
-        quotas.sort((a, b) => {
-            const indexA = ORDER.indexOf(a.label);
-            const indexB = ORDER.indexOf(b.label);
-            const wA = indexA === -1 ? 999 : indexA;
-            const wB = indexB === -1 ? 999 : indexB;
-            return wA - wB;
-        });
+        if (quotaGroups.length > 0) {
+            const geminiGroup = quotaGroups.find((g: any) => g.displayName?.includes('Gemini') || g.description?.includes('Gemini'));
+            const claudeGptGroup = quotaGroups.find((g: any) => g.displayName?.includes('Claude') || g.displayName?.includes('GPT') || g.description?.includes('Claude'));
+
+            if (geminiGroup?.buckets) {
+                const b5h = geminiGroup.buckets.find((b: any) => b.window === '5h' || b.bucketId?.includes('5h') || b.displayName?.includes('Five Hour'));
+                const bWeekly = geminiGroup.buckets.find((b: any) => b.window === 'weekly' || b.bucketId?.includes('weekly') || b.displayName?.includes('Weekly'));
+
+                // GEMINI PRO (g1)
+                const pro5h = parseBucket(b5h, 'g1', '#40C4FF');
+                const proWeekly = parseBucket(bWeekly, 'g1', '#40C4FF');
+                if (pro5h) quotas.push(pro5h);
+                if (proWeekly) quotas.push(proWeekly);
+
+                // GEMINI FLASH (g2)
+                const flash5h = parseBucket(b5h, 'g2', '#40C4FF');
+                const flashWeekly = parseBucket(bWeekly, 'g2', '#40C4FF');
+                if (flash5h) quotas.push(flash5h);
+                if (flashWeekly) quotas.push(flashWeekly);
+            }
+
+            if (claudeGptGroup?.buckets) {
+                const b5h = claudeGptGroup.buckets.find((b: any) => b.window === '5h' || b.bucketId?.includes('5h') || b.displayName?.includes('Five Hour'));
+                const bWeekly = claudeGptGroup.buckets.find((b: any) => b.window === 'weekly' || b.bucketId?.includes('weekly') || b.displayName?.includes('Weekly'));
+
+                // CLAUDE (Antigravity) (g3) - Using Antigravity Cyan/Blue
+                const cg5h = parseBucket(b5h, 'g3', '#38bdf8');
+                const cgWeekly = parseBucket(bWeekly, 'g3', '#38bdf8');
+                if (cg5h) quotas.push(cg5h);
+                if (cgWeekly) quotas.push(cgWeekly);
+            }
+        }
+
+        // Fallback if summary was empty
+        if (quotas.length === 0) {
+            const modelConfigs: any[] = user?.cascadeModelConfigData?.clientModelConfigs || [];
+            const extractGroupQuota = (groupId: 'g1' | 'g2' | 'g3', filterFn: (m: any) => boolean, defaultColor: string): QuotaInfo[] => {
+                const configs = modelConfigs.filter(m => m.quotaInfo && filterFn(m));
+                if (configs.length === 0) return [];
+
+                const primaryConfig = configs[0];
+                const qInfo = primaryConfig.quotaInfo;
+                const remaining = Math.round((qInfo.remainingFraction || 0) * 100);
+
+                let resetTimeStr = 'Ready';
+                if (qInfo.resetTime && qInfo.resetTime !== 'Ready') {
+                    try {
+                        const resetDate = new Date(qInfo.resetTime);
+                        if (!isNaN(resetDate.getTime())) {
+                            resetTimeStr = resetDate.toLocaleString();
+                        }
+                    } catch {
+                        resetTimeStr = qInfo.resetTime;
+                    }
+                }
+
+                return [{
+                    label: '5-Hour Session',
+                    remaining,
+                    resetTime: resetTimeStr,
+                    absResetTime: '',
+                    themeColor: defaultColor,
+                    displayValue: `${remaining}%`,
+                    style: 'fluid',
+                    direction: 'down',
+                    groupId
+                }];
+            };
+
+            const proQuotas = extractGroupQuota('g1', m => (m.label?.includes('Pro') || m.modelId?.includes('pro')), '#38bdf8');
+            const flashQuotas = extractGroupQuota('g2', m => (m.label?.includes('Flash') || m.modelId?.includes('flash')), '#38bdf8');
+            const claudeGptQuotas = extractGroupQuota('g3', m => (m.label?.includes('Claude') || m.label?.includes('GPT') || m.modelId?.includes('claude') || m.modelId?.includes('gpt')), '#38bdf8');
+
+            quotas = [...proQuotas, ...flashQuotas, ...claudeGptQuotas];
+        }
 
         return {
             name: user?.name || 'User',
