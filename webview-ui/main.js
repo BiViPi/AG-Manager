@@ -99,41 +99,44 @@ function renderDashboard(data) {
 
         html += '<div id="quota-list">';
 
-        // 2. Bento Card: GEMINI MODELS (Pro & Flash)
+        // 2. Bento Card: 3.8 Flash
         if (ag?.quotas) {
-            const geminiQuotas = ag.quotas.filter(q => q.groupId === 'g1' || q.groupId === 'g2' || q.label?.includes('Pro') || q.label?.includes('Flash'));
-            const uniqueGemini = [];
+            const flashQuotas = ag.quotas.filter(q =>
+                (q.groupId === 'g1' || q.groupId === 'g2' || q.label?.includes('Flash')) &&
+                !q.label?.includes('Argon') && q.groupId !== 'g4'
+            );
+            const uniqueFlash = [];
             const seenLabels = new Set();
-            geminiQuotas.forEach(q => {
+            flashQuotas.forEach(q => {
                 if (!seenLabels.has(q.label)) {
                     seenLabels.add(q.label);
-                    uniqueGemini.push(q);
+                    uniqueFlash.push(q);
                 }
             });
 
-            if (uniqueGemini.length > 0) {
+            if (uniqueFlash.length > 0) {
                 const isVis = visibility['g1'] !== false || visibility['g2'] !== false;
                 html += renderBentoCard({
                     cardClass: 'gemini',
-                    title: 'Gemini Models',
-                    subtitle: '(Pro & Flash)',
+                    title: '3.8 Flash',
+                    subtitle: '',
                     dotClass: 'dot-gemini',
                     tagClass: 'tag-gemini',
                     fillClass: 'fill-gemini',
-                    quotas: uniqueGemini,
-                    groupId: 'g1',
+                    quotas: uniqueFlash,
+                    groupId: 'g2',
                     isVisible: isVis
                 });
             }
 
-            // 3. Bento Card: CLAUDE (Antigravity)
+            // 3. Bento Card: Claude 5.5
             const claudeAgQuotas = ag.quotas.filter(q => q.groupId === 'g3' || q.label?.includes('Claude') || q.label?.includes('GPT'));
             if (claudeAgQuotas.length > 0) {
                 const isVis = visibility['g3'] !== false;
                 html += renderBentoCard({
                     cardClass: 'ag-claude',
-                    title: 'Claude (Antigravity)',
-                    subtitle: '(Thinking & GPT)',
+                    title: 'Claude 5.5',
+                    subtitle: '',
                     dotClass: 'dot-ag-claude',
                     tagClass: 'tag-ag-claude',
                     fillClass: 'fill-ag-claude',
@@ -142,9 +145,26 @@ function renderDashboard(data) {
                     isVisible: isVis
                 });
             }
+
+            // 4. Bento Card: Gemini 4 Argon
+            const argonQuotas = ag.quotas.filter(q => q.groupId === 'g4' || q.label?.includes('Argon'));
+            if (argonQuotas.length > 0) {
+                const isVis = visibility['g4'] !== false;
+                html += renderBentoCard({
+                    cardClass: 'argon',
+                    title: 'Gemini 4 Argon',
+                    subtitle: '(Reasoning Quota)',
+                    dotClass: 'dot-argon',
+                    tagClass: 'tag-argon',
+                    fillClass: 'fill-argon',
+                    quotas: argonQuotas,
+                    groupId: 'g4',
+                    isVisible: isVis
+                });
+            }
         }
 
-        // 4. Bento Card: CODEX (ChatGPT)
+        // 5. Bento Card: CODEX (ChatGPT)
         if (data.codex) {
             const codexQuotas = [];
             if (data.codex.primary && !data.codex.primary.outdated) {
@@ -183,7 +203,7 @@ function renderDashboard(data) {
             }
         }
 
-        // 5. Bento Card: CLAUDE (OAuth)
+        // 6. Bento Card: CLAUDE (OAuth)
         if (data.claude) {
             const claudeOAuthQuotas = [];
             if (data.claude.session?.resetAt) {
@@ -222,14 +242,10 @@ function renderDashboard(data) {
 
         html += '</div>'; // End quota-list
 
-        // 6. Automation Suite Matrix
-        const autoConfig = data.autoClick || data.antigravity?.autoClick || { active: true, rules: [] };
-        html += renderAutomationMatrix(autoConfig);
-
         app.innerHTML = html;
 
         // Attach Event Listeners
-        attachEventListeners(autoConfig);
+        attachEventListeners();
 
     } catch (globalError) {
         console.error('[SQM] Dashboard Render Error:', globalError);
@@ -283,52 +299,7 @@ function renderBentoCard({ cardClass, title, subtitle, dotClass, tagClass, fillC
     `;
 }
 
-function renderAutomationMatrix(config) {
-    const getLabel = (key, fallback) => (typeof window.t === 'function' ? window.t(key) : fallback);
-    const rules = [
-        { id: 'Run', label: getLabel('rule.Run', 'Running (Run)') },
-        { id: 'Allow', label: getLabel('rule.Allow', 'Permission (Allow)') },
-        { id: 'Accept', label: getLabel('rule.Accept', 'Accept') },
-        { id: 'Always Allow', label: getLabel('rule.AlwaysAllow', 'Always Allow') },
-        { id: 'Retry', label: getLabel('rule.Retry', 'Retry') },
-        { id: 'Keep Waiting', label: getLabel('rule.KeepWaiting', 'Skip Wait') },
-        { id: 'Accept all', label: getLabel('rule.AcceptAll', 'Accept All') }
-    ];
-
-    const rulesList = Array.isArray(config.rules) ? config.rules : [];
-    const isSystemOn = !!config.active;
-
-    const chipsHtml = rules.map(rule => {
-        const isRuleOn = rulesList.includes(rule.id);
-        const isActuallyActive = isSystemOn && isRuleOn;
-        return `
-            <div class="chip ${isActuallyActive ? 'active' : ''}" data-rule="${rule.id}" title="${rule.label}">
-                ${rule.label}
-            </div>
-        `;
-    }).join('');
-
-    const autoTitle = getLabel('automation.title', 'Automation Suite');
-
-    return `
-        <div class="automation-container">
-            <div class="auto-title-row">
-                <span class="auto-title">⚡ ${autoTitle}</span>
-                <div class="switch-wrapper">
-                    <label class="switch">
-                        <input type="checkbox" id="master-power" ${isSystemOn ? 'checked' : ''}>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-            </div>
-            <div class="rule-chips ${!isSystemOn ? 'system-off' : ''}">
-                ${chipsHtml}
-            </div>
-        </div>
-    `;
-}
-
-function attachEventListeners(autoConfig) {
+function attachEventListeners() {
     // Visibility Buttons (Toggle eye on/off)
     document.querySelectorAll('.card-visibility-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -367,40 +338,4 @@ function attachEventListeners(autoConfig) {
             if (window._lastDashboardData) renderDashboard(window._lastDashboardData);
         });
     }
-
-    // Master Power Toggle
-    const masterPower = document.getElementById('master-power');
-    if (masterPower) {
-        masterPower.addEventListener('change', (e) => {
-            const isChecked = e.target.checked;
-            const matrix = document.querySelector('.rule-chips');
-            if (matrix) {
-                if (isChecked) {
-                    matrix.classList.remove('system-off');
-                } else {
-                    matrix.classList.add('system-off');
-                }
-            }
-            vscode.postMessage({
-                type: 'onAutoClickChange',
-                config: { enabled: isChecked }
-            });
-        });
-    }
-
-    // Rule Chips Toggle
-    document.querySelectorAll('.chip').forEach(chip => {
-        chip.addEventListener('click', () => {
-            chip.classList.toggle('active');
-            const activeRules = [];
-            document.querySelectorAll('.chip.active').forEach(c => {
-                const r = c.getAttribute('data-rule');
-                if (r) activeRules.push(r);
-            });
-            vscode.postMessage({
-                type: 'onAutoClickChange',
-                config: { rules: activeRules }
-            });
-        });
-    });
 }

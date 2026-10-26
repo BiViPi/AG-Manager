@@ -1,8 +1,8 @@
 {
     "name": "ag-manager",
     "displayName": "Antigravity-Codex-Claude Monitor",
-    "description": "Monitor AI model quotas and manage automation features inside Antigravity IDE.",
-    "version": "1.5.0",
+    "description": "Monitor Antigravity (Gemini Flash, Pro, Argon, Claude), OpenAI Codex, and Claude quotas inside Antigravity IDE.",
+    "version": "1.6.0",
     "publisher": "BiViPi",
     "author": {
         "name": "BiViPi",
@@ -73,26 +73,6 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Enable notifications for low quotas"
-                },
-                "ag-manager.automation.enabled": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Bật/tắt hệ thống tự động hóa."
-                },
-                "ag-manager.automation.rules": {
-                    "type": "array",
-                    "default": [
-                        "Run",
-                        "Allow",
-                        "Accept",
-                        "Always Allow",
-                        "Keep Waiting",
-                        "Retry",
-                        "Continue",
-                        "Allow Once",
-                        "Accept all"
-                    ],
-                    "description": "Các quy tắc tự động hóa được kích hoạt."
                 }
             }
         }

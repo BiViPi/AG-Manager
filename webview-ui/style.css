@@ -10,6 +10,8 @@
 
     --gemini-color: #38bdf8;
     --gemini-glow: rgba(56, 189, 248, 0.25);
+    --argon-color: #c084fc;
+    --argon-glow: rgba(192, 132, 252, 0.25);
     --ag-claude-color: #38bdf8;
     --ag-claude-glow: rgba(56, 189, 248, 0.25);
     --codex-color: #34d399;
@@ -193,6 +195,10 @@ body {
     background: linear-gradient(90deg, #0284c7, #38bdf8, transparent);
 }
 
+.bento-card.argon::before {
+    background: linear-gradient(90deg, #9333ea, #c084fc, transparent);
+}
+
 .bento-card.codex::before {
     background: linear-gradient(90deg, #059669, #34d399, transparent);
 }
@@ -230,6 +236,10 @@ body {
     color: var(--gemini-color);
 }
 
+.tag-argon {
+    color: var(--argon-color);
+}
+
 .tag-codex {
     color: var(--codex-color);
 }
@@ -257,6 +267,11 @@ body {
 .dot-ag-claude {
     background: var(--gemini-color);
     box-shadow: 0 0 8px var(--gemini-color);
+}
+
+.dot-argon {
+    background: var(--argon-color);
+    box-shadow: 0 0 8px var(--argon-color);
 }
 
 .dot-codex {
@@ -356,6 +371,11 @@ body {
     box-shadow: 0 0 10px var(--gemini-glow);
 }
 
+.fill-argon {
+    background: linear-gradient(90deg, #9333ea, #c084fc);
+    box-shadow: 0 0 10px var(--argon-glow);
+}
+
 .fill-codex {
     background: linear-gradient(90deg, #059669, #34d399);
     box-shadow: 0 0 10px var(--codex-glow);
@@ -364,129 +384,6 @@ body {
 .fill-claude-oauth {
     background: linear-gradient(90deg, #ea580c, #fb923c);
     box-shadow: 0 0 10px var(--claude-oauth-glow);
-}
-
-/* Automation Suite Matrix */
-.automation-container {
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
-    border-radius: 12px;
-    padding: 12px;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    margin-top: 4px;
-}
-
-.auto-title-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 10px;
-}
-
-.auto-title {
-    font-size: 10px;
-    font-weight: 800;
-    color: #6ee7b7;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.switch-wrapper {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.switch {
-    position: relative;
-    display: inline-block;
-    width: 28px;
-    height: 16px;
-}
-
-.switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-}
-
-.slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: #374151;
-    transition: .25s ease;
-    border-radius: 16px;
-}
-
-.slider:before {
-    position: absolute;
-    content: "";
-    height: 12px;
-    width: 12px;
-    left: 2px;
-    bottom: 2px;
-    background-color: white;
-    transition: .25s ease;
-    border-radius: 50%;
-}
-
-input:checked + .slider {
-    background-color: #10b981;
-    box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
-}
-
-input:checked + .slider:before {
-    transform: translateX(12px);
-}
-
-/* Matrix Control Chips */
-.rule-chips {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 6px;
-}
-
-.rule-chips.system-off .chip {
-    opacity: 0.35;
-    pointer-events: none;
-}
-
-.chip {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--border-subtle);
-    padding: 7px 4px;
-    border-radius: 7px;
-    text-align: center;
-    font-size: 9.5px;
-    font-weight: 600;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    user-select: none;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.chip:hover {
-    border-color: var(--border-hover);
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text-main);
-}
-
-.chip.active {
-    background: rgba(16, 185, 129, 0.1);
-    border-color: rgba(16, 185, 129, 0.35);
-    color: #6ee7b7;
-    box-shadow: 0 0 8px rgba(16, 185, 129, 0.12);
 }
 
 /* States */

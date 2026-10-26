@@ -31,8 +31,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         webviewView.webview.onDidReceiveMessage(async (data) => {
             if (data.type === "onRefresh") {
                 this.updateData();
-            } else if (data.type === "onAutoClickChange") {
-                vscode.commands.executeCommand("ag-manager.updateAutoClick", data.config);
             } else if (data.type === "onToggleVisibility") {
                 vscode.commands.executeCommand("ag-manager.toggleVisibility", data.groupId);
             }

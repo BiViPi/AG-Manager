@@ -58,7 +58,6 @@ export interface DashboardData {
     antigravity: UserStatus | null;
     codex?: RateLimitData | null;
     claude?: ClaudeQuotaInfo | null;
-    autoClick?: any;
 }
 
 // ─── [ADDED] Codex Rate Limit Types ───────────────────────────────────────
@@ -467,19 +466,20 @@ export class QuotaService {
 
         const parseBucket = (bucket: any, groupId: string, themeColor: string): QuotaInfo | null => {
             if (!bucket) return null;
-            const remaining = Math.round((bucket.remainingFraction || 0) * 100);
+            const remaining = Math.round((bucket.remainingFraction || bucket.remaining_fraction || 0) * 100);
             let resetTimeStr = 'Ready';
-            if (bucket.resetTime && bucket.resetTime !== 'Ready') {
+            const rTime = bucket.resetTime || bucket.reset_time;
+            if (rTime && rTime !== 'Ready') {
                 try {
-                    const resetDate = new Date(bucket.resetTime);
+                    const resetDate = new Date(rTime);
                     if (!isNaN(resetDate.getTime())) {
                         resetTimeStr = resetDate.toLocaleString();
                     }
                 } catch {
-                    resetTimeStr = bucket.resetTime;
+                    resetTimeStr = rTime;
                 }
             }
-            const label = bucket.window === 'weekly' || bucket.displayName?.includes('Weekly') ? 'Weekly Limit' : '5-Hour Session';
+            const label = bucket.window === 'weekly' || bucket.displayName?.includes('Weekly') || bucket.name?.includes('Weekly') ? 'Weekly Limit' : '5-Hour Session';
             return {
                 label,
                 remaining,
@@ -496,20 +496,27 @@ export class QuotaService {
         let quotas: QuotaInfo[] = [];
 
         if (quotaGroups.length > 0) {
-            const geminiGroup = quotaGroups.find((g: any) => g.displayName?.includes('Gemini') || g.description?.includes('Gemini'));
-            const claudeGptGroup = quotaGroups.find((g: any) => g.displayName?.includes('Claude') || g.displayName?.includes('GPT') || g.description?.includes('Claude'));
+            // Standard Gemini Models (Flash, Pro) excluding Argon
+            const geminiGroup = quotaGroups.find((g: any) =>
+                (g.displayName?.includes('Gemini') || g.name?.includes('Gemini') || g.description?.includes('Gemini')) &&
+                !g.displayName?.includes('Argon') && !g.name?.includes('Argon') && !g.description?.includes('Argon')
+            );
+            // 3rd-party models (Claude, GPT)
+            const claudeGptGroup = quotaGroups.find((g: any) =>
+                (g.displayName?.includes('Claude') || g.displayName?.includes('GPT') || g.name?.includes('Claude') || g.description?.includes('Claude')) &&
+                !g.displayName?.includes('Argon') && !g.name?.includes('Argon')
+            );
+            // Gemini 4 Argon (Dedicated reasoning model group)
+            const argonGroup = quotaGroups.find((g: any) =>
+                g.displayName?.includes('Argon') || g.name?.includes('Argon') || g.description?.includes('Argon') ||
+                g.buckets?.some((b: any) => b.bucketId?.includes('argon') || b.id?.includes('argon') || b.displayName?.includes('Argon') || b.name?.includes('Argon'))
+            );
 
             if (geminiGroup?.buckets) {
-                const b5h = geminiGroup.buckets.find((b: any) => b.window === '5h' || b.bucketId?.includes('5h') || b.displayName?.includes('Five Hour'));
-                const bWeekly = geminiGroup.buckets.find((b: any) => b.window === 'weekly' || b.bucketId?.includes('weekly') || b.displayName?.includes('Weekly'));
+                const b5h = geminiGroup.buckets.find((b: any) => b.window === '5h' || b.bucketId?.includes('5h') || b.id?.includes('5h') || b.displayName?.includes('Five Hour') || b.name?.includes('Five Hour'));
+                const bWeekly = geminiGroup.buckets.find((b: any) => b.window === 'weekly' || b.bucketId?.includes('weekly') || b.id?.includes('weekly') || b.displayName?.includes('Weekly') || b.name?.includes('Weekly'));
 
-                // GEMINI PRO (g1)
-                const pro5h = parseBucket(b5h, 'g1', '#40C4FF');
-                const proWeekly = parseBucket(bWeekly, 'g1', '#40C4FF');
-                if (pro5h) quotas.push(pro5h);
-                if (proWeekly) quotas.push(proWeekly);
-
-                // GEMINI FLASH (g2)
+                // GEMINI 3.8 FLASH (g2)
                 const flash5h = parseBucket(b5h, 'g2', '#40C4FF');
                 const flashWeekly = parseBucket(bWeekly, 'g2', '#40C4FF');
                 if (flash5h) quotas.push(flash5h);
@@ -517,8 +524,8 @@ export class QuotaService {
             }
 
             if (claudeGptGroup?.buckets) {
-                const b5h = claudeGptGroup.buckets.find((b: any) => b.window === '5h' || b.bucketId?.includes('5h') || b.displayName?.includes('Five Hour'));
-                const bWeekly = claudeGptGroup.buckets.find((b: any) => b.window === 'weekly' || b.bucketId?.includes('weekly') || b.displayName?.includes('Weekly'));
+                const b5h = claudeGptGroup.buckets.find((b: any) => b.window === '5h' || b.bucketId?.includes('5h') || b.id?.includes('5h') || b.displayName?.includes('Five Hour') || b.name?.includes('Five Hour'));
+                const bWeekly = claudeGptGroup.buckets.find((b: any) => b.window === 'weekly' || b.bucketId?.includes('weekly') || b.id?.includes('weekly') || b.displayName?.includes('Weekly') || b.name?.includes('Weekly'));
 
                 // CLAUDE (Antigravity) (g3) - Using Antigravity Cyan/Blue
                 const cg5h = parseBucket(b5h, 'g3', '#38bdf8');
@@ -526,12 +533,31 @@ export class QuotaService {
                 if (cg5h) quotas.push(cg5h);
                 if (cgWeekly) quotas.push(cgWeekly);
             }
+
+            if (argonGroup?.buckets) {
+                const b5h = argonGroup.buckets.find((b: any) => b.window === '5h' || b.bucketId?.includes('5h') || b.id?.includes('5h') || b.displayName?.includes('Five Hour') || b.name?.includes('Five Hour'));
+                const bWeekly = argonGroup.buckets.find((b: any) => b.window === 'weekly' || b.bucketId?.includes('weekly') || b.id?.includes('weekly') || b.displayName?.includes('Weekly') || b.name?.includes('Weekly'));
+
+                // GEMINI 4 ARGON (g4) - Neon Violet / Purple
+                const argon5h = parseBucket(b5h, 'g4', '#c084fc');
+                const argonWeekly = parseBucket(bWeekly, 'g4', '#c084fc');
+                if (argon5h) quotas.push(argon5h);
+                if (argonWeekly) quotas.push(argonWeekly);
+
+                // If non-standard window labels exist, parse remaining buckets
+                if (!argon5h && !argonWeekly && argonGroup.buckets.length > 0) {
+                    for (const b of argonGroup.buckets) {
+                        const parsed = parseBucket(b, 'g4', '#c084fc');
+                        if (parsed) quotas.push(parsed);
+                    }
+                }
+            }
         }
 
         // Fallback if summary was empty
         if (quotas.length === 0) {
             const modelConfigs: any[] = user?.cascadeModelConfigData?.clientModelConfigs || [];
-            const extractGroupQuota = (groupId: 'g1' | 'g2' | 'g3', filterFn: (m: any) => boolean, defaultColor: string): QuotaInfo[] => {
+            const extractGroupQuota = (groupId: 'g1' | 'g2' | 'g3' | 'g4', filterFn: (m: any) => boolean, defaultColor: string): QuotaInfo[] => {
                 const configs = modelConfigs.filter(m => m.quotaInfo && filterFn(m));
                 if (configs.length === 0) return [];
 
@@ -564,11 +590,11 @@ export class QuotaService {
                 }];
             };
 
-            const proQuotas = extractGroupQuota('g1', m => (m.label?.includes('Pro') || m.modelId?.includes('pro')), '#38bdf8');
-            const flashQuotas = extractGroupQuota('g2', m => (m.label?.includes('Flash') || m.modelId?.includes('flash')), '#38bdf8');
+            const flashQuotas = extractGroupQuota('g2', m => (m.label?.includes('Flash') || m.modelId?.includes('flash')) && !m.label?.includes('Argon'), '#38bdf8');
             const claudeGptQuotas = extractGroupQuota('g3', m => (m.label?.includes('Claude') || m.label?.includes('GPT') || m.modelId?.includes('claude') || m.modelId?.includes('gpt')), '#38bdf8');
+            const argonQuotas = extractGroupQuota('g4', m => (m.label?.includes('Argon') || m.modelId?.includes('argon')), '#c084fc');
 
-            quotas = [...proQuotas, ...flashQuotas, ...claudeGptQuotas];
+            quotas = [...flashQuotas, ...claudeGptQuotas, ...argonQuotas];
         }
 
         return {

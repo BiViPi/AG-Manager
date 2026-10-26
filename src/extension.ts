@@ -1,27 +1,24 @@
 import * as vscode from 'vscode';
 import { QuotaService } from './quotaService';
 import { SidebarProvider } from './sidebarProvider';
-import { AutomationService } from './automationService';
 
 let statusBarItem: vscode.StatusBarItem;
 let latestQuotaData: any = null;
 let globalSidebarProvider: SidebarProvider | null = null;
 let globalContext: vscode.ExtensionContext | null = null;
-let automationService: AutomationService | null = null;
 let refreshTimer: NodeJS.Timeout | null = null;
 const notifiedModels = new Set<string>();
 
 const GROUPS = [
-    { id: 'g1', title: 'GEMINI PRO', match: (q: any) => (typeof q === 'string' ? q.includes('Pro') : (q.groupId === 'g1' || q.label?.includes('Pro'))) },
-    { id: 'g2', title: 'GEMINI FLASH', match: (q: any) => (typeof q === 'string' ? q.includes('Flash') : (q.groupId === 'g2' || q.label?.includes('Flash'))) },
-    { id: 'g3', title: 'CLAUDE (Antigravity)', match: (q: any) => (typeof q === 'string' ? (q.includes('Claude') || q.includes('GPT')) : (q.groupId === 'g3' || q.label?.includes('Claude') || q.label?.includes('GPT'))) }
+    { id: 'g2', title: '3.8 FLASH', match: (q: any) => (typeof q === 'string' ? (q.includes('Flash') && !q.includes('Argon')) : (q.groupId === 'g2' || q.groupId === 'g1' || (q.label?.includes('Flash') && !q.label?.includes('Argon')))) },
+    { id: 'g3', title: 'CLAUDE 5.5', match: (q: any) => (typeof q === 'string' ? (q.includes('Claude') || q.includes('GPT')) : (q.groupId === 'g3' || q.label?.includes('Claude') || q.label?.includes('GPT'))) },
+    { id: 'g4', title: 'GEMINI 4 ARGON', match: (q: any) => (typeof q === 'string' ? q.includes('Argon') : (q.groupId === 'g4' || q.label?.includes('Argon'))) }
 ];
 
 export function activate(context: vscode.ExtensionContext) {
     globalContext = context;
     const quotaService = new QuotaService();
     globalSidebarProvider = new SidebarProvider(context.extensionUri, quotaService);
-    automationService = new AutomationService(context);
 
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider("sqm.sidebar", globalSidebarProvider)
@@ -53,16 +50,6 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand("sqm.refresh", async () => {
             if (globalSidebarProvider) await globalSidebarProvider.updateData();
-        })
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand("ag-manager.updateAutoClick", async (config) => {
-            if (automationService) {
-                await automationService.patchSettings(config);
-                // Force UI update to reflect new state immediately
-                setLatestData(latestQuotaData);
-            }
         })
     );
 
@@ -197,9 +184,12 @@ function buildTooltipSVG(data: any): string {
 
     // 1. Antigravity Quotas
     if (isGroupVisible('ag-master') && data.antigravity?.quotas) {
-        // 1a. Gemini Models (Pro & Flash combined)
+        // 1a. 3.8 Flash
         if (isGroupVisible('g1') || isGroupVisible('g2')) {
-            const geminiQuotas = data.antigravity.quotas.filter((q: any) => q.groupId === 'g1' || q.groupId === 'g2' || q.label?.includes('Pro') || q.label?.includes('Flash'));
+            const geminiQuotas = data.antigravity.quotas.filter((q: any) =>
+                (q.groupId === 'g1' || q.groupId === 'g2' || q.label?.includes('Flash')) &&
+                !q.label?.includes('Argon') && q.groupId !== 'g4'
+            );
             const uniqueGemini: any[] = [];
             const seen = new Set();
             geminiQuotas.forEach((q: any) => {
@@ -209,15 +199,23 @@ function buildTooltipSVG(data: any): string {
                 }
             });
             if (uniqueGemini.length > 0) {
-                renderBentoSection('GEMINI MODELS', '(Pro &amp; Flash)', uniqueGemini, '#38bdf8', 'gemini-bar-grad');
+                renderBentoSection('3.8 FLASH', '', uniqueGemini, '#38bdf8', 'gemini-bar-grad');
             }
         }
 
-        // 1b. Claude (Antigravity)
+        // 1b. Claude 5.5
         if (isGroupVisible('g3')) {
             const agClaudeQuotas = data.antigravity.quotas.filter((q: any) => q.groupId === 'g3' || q.label?.includes('Claude') || q.label?.includes('GPT'));
             if (agClaudeQuotas.length > 0) {
-                renderBentoSection('CLAUDE (Antigravity)', '(Thinking &amp; GPT)', agClaudeQuotas, '#38bdf8', 'gemini-bar-grad');
+                renderBentoSection('CLAUDE 5.5', '', agClaudeQuotas, '#38bdf8', 'gemini-bar-grad');
+            }
+        }
+
+        // 1c. Gemini 4 Argon (Reasoning Quota)
+        if (isGroupVisible('g4')) {
+            const argonQuotas = data.antigravity.quotas.filter((q: any) => q.groupId === 'g4' || q.label?.includes('Argon'));
+            if (argonQuotas.length > 0) {
+                renderBentoSection('GEMINI 4 ARGON', '(Reasoning Quota)', argonQuotas, '#c084fc', 'argon-bar-grad');
             }
         }
     }
@@ -283,6 +281,10 @@ function buildTooltipSVG(data: any): string {
                 <stop offset="0%" style="stop-color:#0284c7;stop-opacity:1" />
                 <stop offset="100%" style="stop-color:#38bdf8;stop-opacity:1" />
             </linearGradient>
+            <linearGradient id="argon-bar-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" style="stop-color:#9333ea;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#c084fc;stop-opacity:1" />
+            </linearGradient>
             <linearGradient id="codex-bar-grad" x1="0%" y1="0%" x2="100%" y2="0%">
                 <stop offset="0%" style="stop-color:#059669;stop-opacity:1" />
                 <stop offset="100%" style="stop-color:#34d399;stop-opacity:1" />
@@ -312,25 +314,36 @@ function refreshStatusBar() {
     if (agVisible && latestQuotaData.antigravity?.quotas) {
         const quotas: any[] = latestQuotaData.antigravity.quotas;
 
-        // 1a. Gemini (Pro/Flash share same 5h quota)
+        // 1a. 3.8 Flash
         if (isGroupVisible('g1') || isGroupVisible('g2')) {
-            const gemini5h = quotas.find(q => (q.groupId === 'g1' || q.groupId === 'g2') && q.label === '5-Hour Session')
+            const flash5h = quotas.find(q => (q.groupId === 'g1' || q.groupId === 'g2') && q.label === '5-Hour Session')
                 || quotas.find(q => (q.groupId === 'g1' || q.groupId === 'g2'));
-            if (gemini5h) {
-                const pct = Math.round(gemini5h.remaining);
+            if (flash5h) {
+                const pct = Math.round(flash5h.remaining);
                 const dot = pct > 50 ? '🟢' : (pct > 20 ? '🟡' : '🔴');
-                parts.push(`${dot} Gemini ${pct}%`);
+                parts.push(`${dot} 3.8 Flash ${pct}%`);
             }
         }
 
-        // 1b. AG-Claude (Claude Sonnet/Opus Thinking & GPT)
+        // 1b. Claude 5.5
         if (isGroupVisible('g3')) {
             const agClaude5h = quotas.find(q => q.groupId === 'g3' && q.label === '5-Hour Session')
                 || quotas.find(q => q.groupId === 'g3');
             if (agClaude5h) {
                 const pct = Math.round(agClaude5h.remaining);
                 const dot = pct > 50 ? '🟢' : (pct > 20 ? '🟡' : '🔴');
-                parts.push(`${dot} AG-Claude ${pct}%`);
+                parts.push(`${dot} Claude 5.5 ${pct}%`);
+            }
+        }
+
+        // 1c. Gemini 4 Argon
+        if (isGroupVisible('g4')) {
+            const argonQuota = quotas.find(q => q.groupId === 'g4' && q.label === 'Weekly Limit')
+                || quotas.find(q => q.groupId === 'g4');
+            if (argonQuota) {
+                const pct = Math.round(argonQuota.remaining);
+                const dot = pct > 50 ? '🟣' : (pct > 20 ? '🟡' : '🔴');
+                parts.push(`${dot} Argon ${pct}%`);
             }
         }
     }
@@ -373,9 +386,8 @@ export function setLatestData(data: any) {
     latestQuotaData = data;
     refreshStatusBar();
     if (globalSidebarProvider && data) {
-        const autoStatus = automationService ? automationService.dumpDiagnostics() : {};
         const visibility = globalContext?.globalState.get<any>('statusBarVisibility') || {};
-        globalSidebarProvider.syncToWebview({ ...data, autoClick: autoStatus, visibility });
+        globalSidebarProvider.syncToWebview({ ...data, visibility });
     }
     // [V10] Check for low quotas
     checkNotifications(data);
