@@ -1,4 +1,6 @@
 .env
+.env.*
+.gitignore
 .vscode/**
 node_modules/**
 src/**
@@ -6,6 +8,12 @@ tsconfig.json
 esbuild.js
 package-lock.json
 .git/**
+.claude/**
 .antigravity/**
 .gemini/**
 tmp/**
+**/*.map
+*.vsix
+*.log
+.DS_Store
+Thumbs.db

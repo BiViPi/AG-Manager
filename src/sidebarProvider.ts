@@ -30,9 +30,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.onDidReceiveMessage(async (data) => {
             if (data.type === "onRefresh") {
-                this.updateData();
+                this.updateData(true);
             } else if (data.type === "onToggleVisibility") {
                 vscode.commands.executeCommand("ag-manager.toggleVisibility", data.groupId);
+            } else if (data.type === "onShowLogs") {
+                vscode.commands.executeCommand("sqm.showLogs");
             }
         });
     }
@@ -44,12 +46,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    public async updateData() {
+    public async updateData(forceRediscover: boolean = false) {
         if (this._view) {
             this._view.webview.postMessage({ type: "loading" });
         }
-        // Changed fetchStatus() -> fetchDashboard() to include Codex
-        const data = await this._quotaService.fetchDashboard();
+        const data = await this._quotaService.fetchDashboard(forceRediscover);
 
         setLatestData(data); // Update global state and status bar
     }
@@ -68,7 +69,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </head>
             <body>
                 <div id="app">
-                    <p class="loading">Establishing connection...</p>
+                    <p class="loading">Loading...</p>
                 </div>
                 <script src="${i18nUri}"></script>
                 <script src="${scriptUri}"></script>

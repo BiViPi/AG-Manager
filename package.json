@@ -1,8 +1,18 @@
 {
     "name": "ag-manager",
     "displayName": "Antigravity-Codex-Claude Monitor",
-    "description": "Monitor Antigravity (Gemini Flash, Pro, Argon, Claude), OpenAI Codex, and Claude quotas inside Antigravity IDE.",
-    "version": "1.6.0",
+    "description": "Monitor Antigravity (Gemini, Claude, GPT), OpenAI Codex, and Claude (OAuth) quotas inside Antigravity IDE.",
+    "version": "1.7.0",
+    "license": "MIT",
+    "keywords": [
+        "antigravity",
+        "quota",
+        "gemini",
+        "claude",
+        "codex",
+        "monitor",
+        "usage"
+    ],
     "publisher": "BiViPi",
     "author": {
         "name": "BiViPi",
@@ -28,7 +38,7 @@
             "activitybar": [
                 {
                     "id": "sqm-explorer",
-                    "title": "Antigravity-Codex Monitor",
+                    "title": "AG Manager",
                     "icon": "$(dashboard)"
                 }
             ]
@@ -51,6 +61,10 @@
                 "command": "sqm.refresh",
                 "title": "AG Manager: Refresh Quotas",
                 "icon": "$(refresh)"
+            },
+            {
+                "command": "sqm.showLogs",
+                "title": "AG Manager: Show Output Logs"
             }
         ],
         "configuration": {
@@ -78,7 +92,7 @@
         }
     },
     "scripts": {
-        "vscode:prepublish": "npm run build",
+        "vscode:prepublish": "node ./esbuild.js --production",
         "build": "node ./esbuild.js",
         "watch": "node ./esbuild.js --watch",
         "package": "vsce package"

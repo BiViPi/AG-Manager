@@ -3,6 +3,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import * as https from 'https';
+import type * as vscode from 'vscode';
 
 /**
  * Claude Quota Provider
@@ -22,6 +23,17 @@ export interface ClaudeQuotaInfo {
 
 export class ClaudeQuotaManager {
     private readonly credsPath = path.join(os.homedir(), '.claude', '.credentials.json');
+    private readonly version: string;
+    private readonly logger?: vscode.OutputChannel;
+
+    constructor(version: string = '1.7.0', logger?: vscode.OutputChannel) {
+        this.version = version;
+        this.logger = logger;
+    }
+
+    private log(msg: string) {
+        this.logger?.appendLine(`[${new Date().toLocaleTimeString()}] [ClaudeQuotaManager] ${msg}`);
+    }
 
     /**
      * Payload chính để lấy Quota
@@ -38,7 +50,7 @@ export class ClaudeQuotaManager {
             const creds = JSON.parse(credsRaw);
 
             const token = creds?.claudeAiOauth?.accessToken;
-            const subType = creds?.claudeAiOauth?.subscriptionType || 'Free';
+            const subType = creds?.claudeAiOauth?.subscriptionType || '';
 
             if (!token) {
                 return null;
@@ -53,14 +65,16 @@ export class ClaudeQuotaManager {
                 session: this.parseLimitObj(data?.five_hour),
                 weekly: this.parseLimitObj(data?.seven_day)
             };
-        } catch (error) {
-            console.error("[AG Manager] Lỗi khi lấy Quota:", error);
+        } catch (error: any) {
+            const msg = error?.message || String(error);
+            console.error("[AG Manager] Lỗi khi lấy Quota:", msg);
+            this.log(`Error fetching Claude quota: ${msg}`);
             return null;
         }
     }
 
     private requestUsageAPI(token: string): Promise<any> {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
             const options = {
                 hostname: 'api.anthropic.com',
                 path: '/api/oauth/usage',
@@ -70,7 +84,7 @@ export class ClaudeQuotaManager {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                     'anthropic-beta': 'oauth-2025-04-20',
-                    'User-Agent': 'ag-manager-vscode/1.0.0'
+                    'User-Agent': `ag-manager-vscode/${this.version}`
                 }
             };
 
@@ -79,11 +93,13 @@ export class ClaudeQuotaManager {
                 res.on('data', (d) => chunks += d);
                 res.on('end', () => {
                     if (res.statusCode && res.statusCode >= 400) {
+                        this.log(`Anthropic usage API returned HTTP ${res.statusCode}`);
                         return resolve(null); // Trả về null thay vì reject để dashboard vẫn chạy
                     }
                     try {
                         resolve(JSON.parse(chunks));
-                    } catch (e) {
+                    } catch {
+                        this.log('Failed to parse Anthropic usage API JSON response');
                         resolve(null);
                     }
                 });
@@ -91,10 +107,12 @@ export class ClaudeQuotaManager {
 
             req.on('timeout', () => {
                 req.destroy();
+                this.log('Anthropic usage API request timed out');
                 resolve(null);
             });
 
-            req.on('error', (e) => {
+            req.on('error', (e: any) => {
+                this.log(`Anthropic usage API error: ${e?.code || e?.message || 'unknown'}`);
                 resolve(null);
             });
             req.end();

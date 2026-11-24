@@ -1,6 +1,6 @@
 import * as http from 'http';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import * as https from 'https';
+import { execFile } from 'child_process';
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -8,24 +8,22 @@ import * as os from 'os';
 import { glob } from 'glob';
 import { ClaudeQuotaManager, ClaudeQuotaInfo } from './claudeQuotaService';
 
-const execAsync = promisify(exec);
-
-// [ADDED] Utility: run a command with timeout, always using powershell.exe on Windows
-async function execWithTimeout(command: string, timeoutMs: number = 8000): Promise<{ stdout: string, stderr: string }> {
+function runPowerShell(script: string, timeoutMs: number = 10000): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-            reject(new Error(`Command timed out after ${timeoutMs}ms`));
-        }, timeoutMs);
-        exec(command, { shell: 'powershell.exe' }, (error, stdout, stderr) => {
-            clearTimeout(timer);
-            if (error) {
-                (error as any).stdout = stdout;
-                (error as any).stderr = stderr;
-                reject(error);
-            } else {
-                resolve({ stdout, stderr });
+        execFile(
+            'powershell.exe',
+            ['-ExecutionPolicy', 'Bypass', '-NoProfile', '-Command', script],
+            { timeout: timeoutMs, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+            (error, stdout, stderr) => {
+                if (error) {
+                    (error as any).stdout = stdout;
+                    (error as any).stderr = stderr;
+                    reject(error);
+                } else {
+                    resolve({ stdout, stderr });
+                }
             }
-        });
+        );
     });
 }
 
@@ -35,27 +33,35 @@ export interface QuotaInfo {
     resetTime: string;
     themeColor?: string;
     absResetTime?: string;
-    // [ADDED] Optional raw value for display (e.g. "23" or "20%")
     displayValue?: string;
-    // [ADDED] Render style and direction
     style?: 'segmented' | 'fluid';
     direction?: 'up' | 'down';
-    groupId?: string;
+    groupId: string;
+    windowKey?: '5h' | 'weekly' | 'other';
+}
+
+export interface QuotaGroup {
+    id: string;
+    title: string;
+    subtitle?: string;
+    color: string;
+    gradientStart: string;
+    quotas: QuotaInfo[];
 }
 
 export interface UserStatus {
     name: string;
     email: string;
     tier: string;
+    groups: QuotaGroup[];
     quotas: QuotaInfo[];
-    // [ADDED] Optional - used by Claude/Codex groups to show login prompt
     isAuthenticated?: boolean;
     error?: string;
 }
 
-// [ADDED] New interface for multi-service dashboard
 export interface DashboardData {
     antigravity: UserStatus | null;
+    antigravityError?: string | null;
     codex?: RateLimitData | null;
     claude?: ClaudeQuotaInfo | null;
 }
@@ -324,54 +330,344 @@ export async function getCodexRateLimitData(customPath?: string): Promise<{ foun
 const API_PATH = '/exa.language_server_pb.LanguageServerService/GetUserStatus';
 const QUOTA_SUMMARY_PATH = '/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary';
 
-export class QuotaService {
-    private serverInfo: { port: number, token: string } | null = null;
-    private discovering: Promise<boolean> | null = null;
-    private claudeQuotaManager = new ClaudeQuotaManager();
-    // [ADDED] Optional logger
-    private logger?: vscode.OutputChannel;
+const ANTIGRAVITY_APP_DATA_VALUES = new Set(['antigravity', 'antigravity-ide']);
+const HUB_DISCOVERY_FILE_PATTERN = /^hub_\d+\.json$/;
+const SERVER_PORT_PATTERN = /--(?:extension_server_port|hub-port|lsp_port|port)[=\s]+(\d+)/;
+const REQUEST_METADATA = {
+    metadata: {
+        ideName: 'antigravity',
+        extensionName: 'antigravity',
+        locale: 'en'
+    }
+};
 
-    constructor(logger?: vscode.OutputChannel) {
+const AG_GROUP_PALETTE = [
+    { color: '#38bdf8', gradientStart: '#0284c7' },
+    { color: '#a78bfa', gradientStart: '#7c3aed' },
+    { color: '#c084fc', gradientStart: '#9333ea' },
+    { color: '#2dd4bf', gradientStart: '#0d9488' }
+];
+
+function getAntigravityGroupPalette(title: string, fallbackIdx: number): { color: string; gradientStart: string } {
+    if (/claude|gpt|3p/i.test(title)) {
+        return { color: '#a78bfa', gradientStart: '#7c3aed' };
+    }
+    if (/argon/i.test(title)) {
+        return { color: '#c084fc', gradientStart: '#9333ea' };
+    }
+    if (/gemini/i.test(title)) {
+        return { color: '#38bdf8', gradientStart: '#0284c7' };
+    }
+    return AG_GROUP_PALETTE[fallbackIdx % AG_GROUP_PALETTE.length];
+}
+
+export interface HubDiscoveryInfo {
+    pid?: number;
+    httpsPort?: number;
+    httpPort?: number;
+    lsVersion?: string;
+    csrfToken: string;
+}
+
+export interface HubDiscoveryCandidate extends HubDiscoveryInfo {
+    mtimeMs: number;
+}
+
+function isPidAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (e: any) {
+        return e?.code === 'EPERM';
+    }
+}
+
+function parsePortNumber(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 65535
+        ? value
+        : undefined;
+}
+
+export function parseHubDiscoveryJson(raw: string, expectedPid?: number): HubDiscoveryInfo | null {
+    try {
+        const data = JSON.parse(raw) as Record<string, unknown>;
+        if (!data || typeof data !== 'object') return null;
+
+        const csrfToken = typeof data.csrfToken === 'string' ? data.csrfToken.trim() : '';
+        if (!csrfToken) return null;
+
+        const pid = typeof data.pid === 'number' && Number.isInteger(data.pid) && data.pid > 0
+            ? data.pid
+            : undefined;
+        if (expectedPid && expectedPid > 0 && pid !== undefined && pid !== expectedPid) {
+            return null;
+        }
+
+        const httpsPort = parsePortNumber(data.httpsPort);
+        const httpPort = parsePortNumber(data.httpPort);
+
+        return {
+            ...(pid !== undefined ? { pid } : {}),
+            ...(httpsPort !== undefined ? { httpsPort } : {}),
+            ...(httpPort !== undefined ? { httpPort } : {}),
+            ...(typeof data.lsVersion === 'string' ? { lsVersion: data.lsVersion } : {}),
+            csrfToken
+        };
+    } catch {
+        return null;
+    }
+}
+
+export function extractCliArgument(commandLine: string, argName: string): string | undefined {
+    const escapedName = argName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(
+        `(?:^|\\s)--${escapedName}(?:=|\\s+)(?:"([^"]+)"|'([^']+)'|([^\\s]+))(?=\\s|$)`,
+        'i'
+    );
+    const match = commandLine.match(pattern);
+    return match?.[1] ?? match?.[2] ?? match?.[3];
+}
+
+export function listAllHubDiscoveryEntries(geminiRoot: string = path.join(os.homedir(), '.gemini')): HubDiscoveryCandidate[] {
+    const entries: HubDiscoveryCandidate[] = [];
+
+    for (const appDataDir of ANTIGRAVITY_APP_DATA_VALUES) {
+        const daemonDir = path.join(geminiRoot, appDataDir, 'daemon');
+        let files: string[];
+        try {
+            files = fs.readdirSync(daemonDir).filter(name => HUB_DISCOVERY_FILE_PATTERN.test(name));
+        } catch {
+            continue;
+        }
+
+        for (const file of files) {
+            const filePath = path.join(daemonDir, file);
+            try {
+                const parsed = parseHubDiscoveryJson(fs.readFileSync(filePath, 'utf8'));
+                if (!parsed) continue;
+                if (parsed.httpsPort === undefined && parsed.httpPort === undefined) continue;
+                if (parsed.pid && !isPidAlive(parsed.pid)) continue;
+
+                let mtimeMs = 0;
+                try {
+                    mtimeMs = fs.statSync(filePath).mtimeMs;
+                } catch {
+                    mtimeMs = 0;
+                }
+                entries.push({ ...parsed, mtimeMs });
+            } catch {
+                // Ignore unreadable or corrupt discovery file
+            }
+        }
+    }
+
+    return entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+function readHubDiscoveryForProcess(
+    commandLine: string,
+    pid: number,
+    geminiRoot: string = path.join(os.homedir(), '.gemini')
+): HubDiscoveryInfo | null {
+    const appDataDir = extractCliArgument(commandLine, 'app_data_dir')?.toLowerCase();
+    if (!appDataDir || !ANTIGRAVITY_APP_DATA_VALUES.has(appDataDir)) {
+        return null;
+    }
+
+    const hubPortRaw = extractCliArgument(commandLine, 'hub-port');
+    const hubPort = hubPortRaw ? parseInt(hubPortRaw, 10) : 0;
+    const isHubProcess = hubPort > 0 || /(?:^|\s)--hub(?=\s|$)/i.test(commandLine);
+    if (!isHubProcess) {
+        return null;
+    }
+
+    const daemonDir = path.join(geminiRoot, appDataDir, 'daemon');
+
+    if (hubPort > 0) {
+        const directPath = path.join(daemonDir, `hub_${hubPort}.json`);
+        if (fs.existsSync(directPath)) {
+            try {
+                const parsed = parseHubDiscoveryJson(fs.readFileSync(directPath, 'utf8'), pid);
+                if (parsed) return parsed;
+            } catch {
+                // Ignore unreadable discovery file
+            }
+        }
+    }
+
+    if (pid > 0) {
+        let files: string[];
+        try {
+            files = fs.readdirSync(daemonDir).filter(name => HUB_DISCOVERY_FILE_PATTERN.test(name));
+        } catch {
+            return null;
+        }
+        for (const file of files) {
+            try {
+                const parsed = parseHubDiscoveryJson(fs.readFileSync(path.join(daemonDir, file), 'utf8'), pid);
+                if (parsed && parsed.pid === pid) return parsed;
+            } catch {
+                // Ignore unreadable discovery file
+            }
+        }
+    }
+
+    return null;
+}
+
+function slugifyGroupId(raw: string, fallbackIdx: number): string {
+    const slug = String(raw || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    return slug || `ag-group-${fallbackIdx + 1}`;
+}
+
+function deriveTitleFromBuckets(buckets: any[], fallbackIdx: number): string {
+    const bucketIds = buckets
+        .map(b => String(b?.bucketId || b?.id || '').trim())
+        .filter(Boolean);
+
+    const joined = bucketIds.join(' ').toLowerCase();
+    if (/(?:^|\b)3p[-_]|claude|gpt/i.test(joined)) {
+        return 'Claude and GPT models';
+    }
+    if (/argon/i.test(joined)) {
+        return 'Gemini Argon';
+    }
+    if (/(?:^|\b)gemini[-_]/i.test(joined)) {
+        return 'Gemini Models';
+    }
+
+    if (bucketIds.length > 0) {
+        const cleaned = bucketIds[0]
+            .replace(/-(?:5h|weekly|wtu-weekly|five-hour)$/i, '')
+            .replace(/[-_]+/g, ' ')
+            .trim();
+        if (cleaned) {
+            return cleaned.replace(/\b\w/g, ch => ch.toUpperCase());
+        }
+    }
+
+    return `Quota Group ${fallbackIdx + 1}`;
+}
+
+export class QuotaService {
+    private serverInfo: { port: number; token: string; protocol: 'http' | 'https' } | null = null;
+    private discovering: Promise<boolean> | null = null;
+    private lastError: string | null = null;
+    private readonly claudeQuotaManager: ClaudeQuotaManager;
+    private readonly logger?: vscode.OutputChannel;
+
+    constructor(logger?: vscode.OutputChannel, extensionVersion: string = '1.7.0') {
         this.logger = logger;
+        this.claudeQuotaManager = new ClaudeQuotaManager(extensionVersion, logger);
     }
 
     private log(msg: string) {
         this.logger?.appendLine(`[${new Date().toLocaleTimeString()}] [QuotaService] ${msg}`);
     }
 
+    public resetConnection(): void {
+        this.serverInfo = null;
+    }
+
     async discoverLocalServer(): Promise<boolean> {
         if (this.discovering) return this.discovering;
 
         this.discovering = (async () => {
-            try {
-                const command = 'powershell -ExecutionPolicy Bypass -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match \'csrf_token\' } | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"';
-                const { stdout } = await execAsync(command);
-                if (!stdout || stdout.trim() === "" || stdout.trim() === "[]") return false;
+            let hadCandidates = false;
 
-                let processes: any[] = [];
-                try {
-                    const parsed = JSON.parse(stdout.trim());
-                    processes = Array.isArray(parsed) ? parsed : [parsed];
-                } catch { return false; }
+            try {
+                // Layer 1: Fast zero-PowerShell hub discovery files (~/.gemini/<app_data_dir>/daemon/hub_*.json)
+                const hubCandidates = listAllHubDiscoveryEntries();
+                this.log(`Layer 1 (hub files): found ${hubCandidates.length} live hub discovery entry/entries.`);
+
+                if (hubCandidates.length > 0) {
+                    hadCandidates = true;
+                    for (const entry of hubCandidates) {
+                        const candidatePorts = Array.from(
+                            new Set([entry.httpsPort, entry.httpPort].filter((p): p is number => typeof p === 'number' && p > 0))
+                        );
+                        this.log(`Probing hub PID ${entry.pid ?? 'unknown'} on port(s) [${candidatePorts.join(', ')}]`);
+                        for (const port of candidatePorts) {
+                            const protocol = await this.testConnection(port, entry.csrfToken);
+                            if (protocol) {
+                                this.serverInfo = { port, token: entry.csrfToken, protocol };
+                                this.lastError = null;
+                                this.log(`Connected via hub discovery file at ${protocol}://127.0.0.1:${port}`);
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                // Layer 2: Fallback process scan (agy.exe / language_server_windows_x64.exe / app_data_dir)
+                let processes: any[] = await this.queryProcessesByName();
+                if (processes.length === 0) {
+                    processes = await this.queryProcessesByAppDataDir();
+                }
+
+                this.log(`Layer 2 (process scan): found ${processes.length} candidate process(es).`);
+                if (processes.length === 0) {
+                    this.lastError = hadCandidates ? 'noServerResponse' : 'noProcess';
+                    return false;
+                }
 
                 for (const proc of processes) {
-                    const cmdLine = proc.CommandLine || "";
-                    const csrfMatch = cmdLine.match(/--csrf_token[\s=]+(?:["']?)([a-zA-Z0-9\-_.]+)(?:["']?)/);
-                    if (!csrfMatch) continue;
+                    const cmdLine = String(proc?.CommandLine || '');
+                    const pid = Number(proc?.ProcessId || 0);
+                    const procName = String(proc?.Name || 'unknown');
+                    if (!pid || !cmdLine) continue;
 
-                    const pid = proc.ProcessId;
-                    const token = csrfMatch[1];
+                    const appDataDir = extractCliArgument(cmdLine, 'app_data_dir')?.toLowerCase();
+                    if (!appDataDir || !ANTIGRAVITY_APP_DATA_VALUES.has(appDataDir)) continue;
+
+                    let csrfToken = extractCliArgument(cmdLine, 'csrf_token');
+                    let hubHttpsPort: number | undefined;
+                    let hubHttpPort: number | undefined;
+
+                    if (!csrfToken) {
+                        const hubInfo = readHubDiscoveryForProcess(cmdLine, pid);
+                        if (!hubInfo) continue;
+                        csrfToken = hubInfo.csrfToken;
+                        hubHttpsPort = hubInfo.httpsPort;
+                        hubHttpPort = hubInfo.httpPort;
+                    }
+
+                    hadCandidates = true;
+                    const portMatch = cmdLine.match(SERVER_PORT_PATTERN);
+                    const cliPort = portMatch?.[1] ? parseInt(portMatch[1], 10) : undefined;
                     const listeningPorts = await this.getListeningPorts(pid);
 
-                    for (const port of listeningPorts) {
-                        if (await this.testConnection(port, token)) {
-                            this.serverInfo = { port, token };
+                    const candidatePorts = Array.from(
+                        new Set(
+                            [hubHttpsPort, hubHttpPort, cliPort, ...listeningPorts]
+                                .filter((p): p is number => typeof p === 'number' && !isNaN(p) && p > 0)
+                        )
+                    );
+
+                    this.log(`Probing PID ${pid} (${procName}) across ${candidatePorts.length} port(s): [${candidatePorts.join(', ')}]`);
+
+                    for (const port of candidatePorts) {
+                        const protocol = await this.testConnection(port, csrfToken);
+                        if (protocol) {
+                            this.serverInfo = { port, token: csrfToken, protocol };
+                            this.lastError = null;
+                            this.log(`Connected to local server at ${protocol}://127.0.0.1:${port} (PID ${pid})`);
                             return true;
                         }
                     }
                 }
-            } catch (e) {
-                console.error('[SQM] Discovery failed:', e);
+
+                this.lastError = hadCandidates ? 'noServerResponse' : 'noProcess';
+                this.log(hadCandidates
+                    ? 'Found candidate server(s), but none responded with HTTP 200.'
+                    : 'No Antigravity server process found.');
+            } catch (e: any) {
+                this.lastError = hadCandidates ? 'noServerResponse' : 'noProcess';
+                this.log(`Discovery failed: ${e?.message || e}`);
+                console.error('[SQM] Discovery failed:', e?.message || e);
             } finally {
                 this.discovering = null;
             }
@@ -381,105 +677,262 @@ export class QuotaService {
         return this.discovering;
     }
 
-    private async getListeningPorts(pid: number): Promise<number[]> {
+    private async queryProcessesByName(): Promise<any[]> {
         try {
-            const cmd = `powershell -NoProfile -Command "Get-NetTCPConnection -State Listen -OwningProcess ${pid} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique"`;
-            const { stdout } = await execAsync(cmd);
-            return stdout.trim().split(/\r?\n/).map(p => parseInt(p.trim())).filter(p => !isNaN(p) && p > 1024);
-        } catch { return []; }
+            const script = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $p = Get-CimInstance Win32_Process -Filter \"name='agy.exe' or name='language_server_windows_x64.exe'\" -ErrorAction SilentlyContinue; if ($p) { @($p) | Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress } else { '[]' }";
+            const { stdout } = await runPowerShell(script, 10000);
+            if (!stdout || stdout.trim() === '' || stdout.trim() === '[]') return [];
+            const parsed = JSON.parse(stdout.trim());
+            return Array.isArray(parsed) ? parsed : [parsed];
+        } catch (e: any) {
+            this.log(`Process name scan failed: ${e?.message || e}`);
+            return [];
+        }
     }
 
-    private async testConnection(port: number, token: string): Promise<boolean> {
+    private async queryProcessesByAppDataDir(): Promise<any[]> {
+        try {
+            const script = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $p = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'app_data_dir' -and $_.Name -notmatch '^(powershell|pwsh)\\.exe$' } -ErrorAction SilentlyContinue; if ($p) { @($p) | Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress } else { '[]' }";
+            const { stdout } = await runPowerShell(script, 10000);
+            if (!stdout || stdout.trim() === '' || stdout.trim() === '[]') return [];
+            const parsed = JSON.parse(stdout.trim());
+            return Array.isArray(parsed) ? parsed : [parsed];
+        } catch (e: any) {
+            this.log(`Process keyword scan failed: ${e?.message || e}`);
+            return [];
+        }
+    }
+
+    private async getListeningPorts(pid: number): Promise<number[]> {
+        try {
+            const script = `Get-NetTCPConnection -State Listen -OwningProcess ${pid} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique`;
+            const { stdout } = await runPowerShell(script, 5000);
+            return stdout.trim().split(/\r?\n/).map(p => parseInt(p.trim(), 10)).filter(p => !isNaN(p) && p > 0);
+        } catch (e: any) {
+            this.log(`Failed to get listening ports for PID ${pid}: ${e?.message || e}`);
+            return [];
+        }
+    }
+
+    private async testConnection(port: number, token: string): Promise<'https' | 'http' | null> {
+        const probeProtocol = (protocol: 'https' | 'http'): Promise<boolean> => {
+            return new Promise((resolve) => {
+                const bodyStr = JSON.stringify({ wrapper_data: {} });
+                const client = protocol === 'https' ? https : http;
+                const options: http.RequestOptions | https.RequestOptions = {
+                    hostname: '127.0.0.1',
+                    port,
+                    path: API_PATH,
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Content-Length': Buffer.byteLength(bodyStr),
+                        'X-Codeium-Csrf-Token': token,
+                        'Connect-Protocol-Version': '1'
+                    },
+                    timeout: 4000,
+                    agent: false,
+                    ...(protocol === 'https' ? { rejectUnauthorized: false } : {})
+                };
+
+                const req = client.request(options, (res) => {
+                    res.resume();
+                    if (res.statusCode === 200) {
+                        resolve(true);
+                    } else {
+                        this.log(`Probe ${protocol}://127.0.0.1:${port} returned HTTP ${res.statusCode}`);
+                        resolve(false);
+                    }
+                });
+                req.on('error', (err: any) => {
+                    this.log(`Probe ${protocol}://127.0.0.1:${port} error: ${err?.code || err?.message || 'unknown'}`);
+                    resolve(false);
+                });
+                req.on('timeout', () => {
+                    req.destroy();
+                    this.log(`Probe ${protocol}://127.0.0.1:${port} timed out`);
+                    resolve(false);
+                });
+                req.write(bodyStr);
+                req.end();
+            });
+        };
+
+        if (await probeProtocol('https')) return 'https';
+        if (await probeProtocol('http')) return 'http';
+        return null;
+    }
+
+    private doSingleApiRequest(apiPath: string, port: number, token: string, protocol: 'http' | 'https'): Promise<{ statusCode: number; data: any } | null> {
         return new Promise((resolve) => {
-            const options = {
-                hostname: '127.0.0.1', port, path: API_PATH, method: 'POST',
+            const bodyStr = JSON.stringify(REQUEST_METADATA);
+            const client = protocol === 'https' ? https : http;
+            const options: http.RequestOptions | https.RequestOptions = {
+                hostname: '127.0.0.1',
+                port,
+                path: apiPath,
+                method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(bodyStr),
                     'X-Codeium-Csrf-Token': token,
                     'Connect-Protocol-Version': '1'
                 },
-                timeout: 800
+                timeout: 12000,
+                agent: false,
+                ...(protocol === 'https' ? { rejectUnauthorized: false } : {})
             };
-            const req = http.request(options, (res) => resolve(res.statusCode === 200));
-            req.on('error', () => resolve(false));
-            req.on('timeout', () => { req.destroy(); resolve(false); });
-            req.write(JSON.stringify({ wrapper_data: {} }));
-            req.end();
-        });
-    }
 
-    private async requestApi(path: string): Promise<any> {
-        if (!this.serverInfo) return null;
-        return new Promise((resolve) => {
-            const options = {
-                hostname: '127.0.0.1', port: this.serverInfo!.port, path, method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Codeium-Csrf-Token': this.serverInfo!.token,
-                    'Connect-Protocol-Version': '1'
-                },
-                timeout: 5000
-            };
-            const req = http.request(options, (res) => {
-                let data = '';
-                res.on('data', chunk => data += chunk);
+            const req = client.request(options, (res) => {
+                let raw = '';
+                res.on('data', chunk => raw += chunk);
                 res.on('end', () => {
-                    if (res.statusCode === 200) {
-                        try { resolve(JSON.parse(data)); } catch { resolve(null); }
-                    } else { resolve(null); }
+                    const statusCode = res.statusCode || 0;
+                    if (statusCode === 200) {
+                        try {
+                            resolve({ statusCode, data: JSON.parse(raw) });
+                        } catch {
+                            this.log(`Failed to parse JSON from ${apiPath}`);
+                            resolve({ statusCode, data: null });
+                        }
+                    } else {
+                        this.log(`API ${apiPath} (${protocol}) returned HTTP ${statusCode}`);
+                        resolve({ statusCode, data: null });
+                    }
                 });
             });
-            req.on('error', () => resolve(null));
-            req.on('timeout', () => { req.destroy(); resolve(null); });
-            req.write(JSON.stringify({ wrapper_data: {} }));
+            req.on('error', (err: any) => {
+                this.log(`API ${apiPath} (${protocol}) request error: ${err?.code || err?.message || 'unknown'}`);
+                resolve(null);
+            });
+            req.on('timeout', () => {
+                req.destroy();
+                this.log(`API ${apiPath} (${protocol}) timed out`);
+                resolve(null);
+            });
+            req.write(bodyStr);
             req.end();
         });
     }
 
-    async fetchStatus(): Promise<UserStatus | null> {
+    private async requestApi(apiPath: string): Promise<any> {
+        if (!this.serverInfo) return null;
+        const { port, token, protocol } = this.serverInfo;
+
+        const primary = await this.doSingleApiRequest(apiPath, port, token, protocol);
+        if (primary !== null) {
+            return primary.data;
+        }
+
+        const fallbackProtocol: 'http' | 'https' = protocol === 'https' ? 'http' : 'https';
+        this.log(`API ${apiPath}: ${protocol} failed, trying ${fallbackProtocol} fallback...`);
+        const fallback = await this.doSingleApiRequest(apiPath, port, token, fallbackProtocol);
+        if (fallback !== null) {
+            if (this.serverInfo) {
+                this.serverInfo.protocol = fallbackProtocol;
+            }
+            return fallback.data;
+        }
+
+        return null;
+    }
+
+    async fetchStatus(forceRediscover: boolean = false): Promise<UserStatus | null> {
+        if (forceRediscover) {
+            this.serverInfo = null;
+        }
+
+        const usedCachedServer = Boolean(this.serverInfo);
         if (!this.serverInfo) {
             const found = await this.discoverLocalServer();
             if (!found) return null;
         }
 
         try {
-            const [statusResp, summaryResp] = await Promise.all([
+            let [statusResp, summaryResp] = await Promise.all([
                 this.requestApi(API_PATH),
                 this.requestApi(QUOTA_SUMMARY_PATH)
             ]);
 
+            if (!statusResp && !summaryResp && usedCachedServer && !forceRediscover) {
+                this.log('Cached server failed to respond; re-discovering local server...');
+                this.serverInfo = null;
+                const rediscovered = await this.discoverLocalServer();
+                if (!rediscovered) return null;
+                [statusResp, summaryResp] = await Promise.all([
+                    this.requestApi(API_PATH),
+                    this.requestApi(QUOTA_SUMMARY_PATH)
+                ]);
+            }
+
             if (!statusResp && !summaryResp) {
                 this.serverInfo = null;
+                this.lastError = 'requestFailed';
+                this.log('Both GetUserStatus and RetrieveUserQuotaSummary failed.');
                 return null;
             }
 
-            return this.parseResponse(statusResp, summaryResp);
-        } catch (e) {
+            this.lastError = null;
+            const parsed = this.parseResponse(statusResp, summaryResp);
+            const groupSummary = parsed.groups.map(g => `${g.title}(${g.quotas.length})`).join(', ');
+            this.log(`Fetched status OK (tier="${parsed.tier || 'N/A'}", groups=[${groupSummary}])`);
+            return parsed;
+        } catch (e: any) {
             this.serverInfo = null;
+            this.lastError = 'requestFailed';
+            this.log(`fetchStatus exception: ${e?.message || e}`);
             return null;
         }
     }
 
-    private parseResponse(statusResp: any, summaryResp?: any): UserStatus {
+    public parseResponse(statusResp: any, summaryResp?: any): UserStatus {
         const user = statusResp?.userStatus;
-        const quotaGroups = summaryResp?.response?.groups || [];
+        const quotaGroups: any[] =
+            summaryResp?.response?.groups ||
+            summaryResp?.groups ||
+            summaryResp?.userQuotaSummary?.groups ||
+            [];
+
+        const normalizeResetTime = (rawTime: any): string => {
+            if (!rawTime || rawTime === 'Ready') return 'Ready';
+            const resetDate = new Date(rawTime);
+            if (!isNaN(resetDate.getTime())) {
+                return resetDate.toISOString();
+            }
+            return String(rawTime);
+        };
+
+        const detectWindowKey = (bucket: any): '5h' | 'weekly' | 'other' => {
+            const rawWindow = String(bucket.window || '').toLowerCase();
+            if (rawWindow === '5h') return '5h';
+            if (rawWindow === 'weekly') return 'weekly';
+            const combined = `${bucket.bucketId || ''} ${bucket.id || ''} ${bucket.displayName || ''} ${bucket.name || ''}`;
+            if (/5h|five\s*hour|5\s*hour/i.test(combined)) return '5h';
+            if (/weekly|7d|week/i.test(combined)) return 'weekly';
+            return 'other';
+        };
 
         const parseBucket = (bucket: any, groupId: string, themeColor: string): QuotaInfo | null => {
             if (!bucket) return null;
-            const remaining = Math.round((bucket.remainingFraction || bucket.remaining_fraction || 0) * 100);
-            let resetTimeStr = 'Ready';
-            const rTime = bucket.resetTime || bucket.reset_time;
-            if (rTime && rTime !== 'Ready') {
-                try {
-                    const resetDate = new Date(rTime);
-                    if (!isNaN(resetDate.getTime())) {
-                        resetTimeStr = resetDate.toLocaleString();
-                    }
-                } catch {
-                    resetTimeStr = rTime;
-                }
+            // Skip amount-only buckets (no percentage fraction)
+            if (
+                bucket.remainingFraction === undefined &&
+                bucket.remaining_fraction === undefined &&
+                (bucket.remainingAmount !== undefined || bucket.remaining_amount !== undefined)
+            ) {
+                return null;
             }
-            const label = bucket.window === 'weekly' || bucket.displayName?.includes('Weekly') || bucket.name?.includes('Weekly') ? 'Weekly Limit' : '5-Hour Session';
+            const rawFraction = bucket.remainingFraction ?? bucket.remaining_fraction ?? 0;
+            const remaining = Math.max(0, Math.min(100, Math.round(Number(rawFraction) * 100)));
+            const rTime = bucket.resetTime || bucket.reset_time;
+            const resetTimeStr = normalizeResetTime(rTime);
+            const windowKey = detectWindowKey(bucket);
+            const label = windowKey === '5h'
+                ? '5-Hour Session'
+                : windowKey === 'weekly'
+                    ? 'Weekly Limit'
+                    : (bucket.displayName || bucket.name || bucket.window || 'Quota');
+
             return {
                 label,
                 remaining,
@@ -489,132 +942,160 @@ export class QuotaService {
                 displayValue: `${remaining}%`,
                 style: 'fluid',
                 direction: 'down',
-                groupId
+                groupId,
+                windowKey
             };
         };
 
-        let quotas: QuotaInfo[] = [];
+        const groups: QuotaGroup[] = [];
+        const windowOrder: Record<'5h' | 'weekly' | 'other', number> = { '5h': 0, 'weekly': 1, 'other': 2 };
 
-        if (quotaGroups.length > 0) {
-            // Standard Gemini Models (Flash, Pro) excluding Argon
-            const geminiGroup = quotaGroups.find((g: any) =>
-                (g.displayName?.includes('Gemini') || g.name?.includes('Gemini') || g.description?.includes('Gemini')) &&
-                !g.displayName?.includes('Argon') && !g.name?.includes('Argon') && !g.description?.includes('Argon')
-            );
-            // 3rd-party models (Claude, GPT)
-            const claudeGptGroup = quotaGroups.find((g: any) =>
-                (g.displayName?.includes('Claude') || g.displayName?.includes('GPT') || g.name?.includes('Claude') || g.description?.includes('Claude')) &&
-                !g.displayName?.includes('Argon') && !g.name?.includes('Argon')
-            );
-            // Gemini 4 Argon (Dedicated reasoning model group)
-            const argonGroup = quotaGroups.find((g: any) =>
-                g.displayName?.includes('Argon') || g.name?.includes('Argon') || g.description?.includes('Argon') ||
-                g.buckets?.some((b: any) => b.bucketId?.includes('argon') || b.id?.includes('argon') || b.displayName?.includes('Argon') || b.name?.includes('Argon'))
-            );
+        if (Array.isArray(quotaGroups) && quotaGroups.length > 0) {
+            quotaGroups.forEach((g: any, idx: number) => {
+                const rawBuckets: any[] = Array.isArray(g?.buckets) ? g.buckets : [];
+                if (rawBuckets.length === 0) return;
 
-            if (geminiGroup?.buckets) {
-                const b5h = geminiGroup.buckets.find((b: any) => b.window === '5h' || b.bucketId?.includes('5h') || b.id?.includes('5h') || b.displayName?.includes('Five Hour') || b.name?.includes('Five Hour'));
-                const bWeekly = geminiGroup.buckets.find((b: any) => b.window === 'weekly' || b.bucketId?.includes('weekly') || b.id?.includes('weekly') || b.displayName?.includes('Weekly') || b.name?.includes('Weekly'));
+                const rawGroupTitle = String(g.displayName || g.name || g.description || '').trim();
+                const title = rawGroupTitle || deriveTitleFromBuckets(rawBuckets, idx);
+                const palette = getAntigravityGroupPalette(title, groups.length);
+                const id = slugifyGroupId(g.groupId || g.id || title, groups.length);
 
-                // GEMINI 3.8 FLASH (g2)
-                const flash5h = parseBucket(b5h, 'g2', '#40C4FF');
-                const flashWeekly = parseBucket(bWeekly, 'g2', '#40C4FF');
-                if (flash5h) quotas.push(flash5h);
-                if (flashWeekly) quotas.push(flashWeekly);
-            }
-
-            if (claudeGptGroup?.buckets) {
-                const b5h = claudeGptGroup.buckets.find((b: any) => b.window === '5h' || b.bucketId?.includes('5h') || b.id?.includes('5h') || b.displayName?.includes('Five Hour') || b.name?.includes('Five Hour'));
-                const bWeekly = claudeGptGroup.buckets.find((b: any) => b.window === 'weekly' || b.bucketId?.includes('weekly') || b.id?.includes('weekly') || b.displayName?.includes('Weekly') || b.name?.includes('Weekly'));
-
-                // CLAUDE (Antigravity) (g3) - Using Antigravity Cyan/Blue
-                const cg5h = parseBucket(b5h, 'g3', '#38bdf8');
-                const cgWeekly = parseBucket(bWeekly, 'g3', '#38bdf8');
-                if (cg5h) quotas.push(cg5h);
-                if (cgWeekly) quotas.push(cgWeekly);
-            }
-
-            if (argonGroup?.buckets) {
-                const b5h = argonGroup.buckets.find((b: any) => b.window === '5h' || b.bucketId?.includes('5h') || b.id?.includes('5h') || b.displayName?.includes('Five Hour') || b.name?.includes('Five Hour'));
-                const bWeekly = argonGroup.buckets.find((b: any) => b.window === 'weekly' || b.bucketId?.includes('weekly') || b.id?.includes('weekly') || b.displayName?.includes('Weekly') || b.name?.includes('Weekly'));
-
-                // GEMINI 4 ARGON (g4) - Neon Violet / Purple
-                const argon5h = parseBucket(b5h, 'g4', '#c084fc');
-                const argonWeekly = parseBucket(bWeekly, 'g4', '#c084fc');
-                if (argon5h) quotas.push(argon5h);
-                if (argonWeekly) quotas.push(argonWeekly);
-
-                // If non-standard window labels exist, parse remaining buckets
-                if (!argon5h && !argonWeekly && argonGroup.buckets.length > 0) {
-                    for (const b of argonGroup.buckets) {
-                        const parsed = parseBucket(b, 'g4', '#c084fc');
-                        if (parsed) quotas.push(parsed);
-                    }
+                const parsedBuckets: QuotaInfo[] = [];
+                const seen = new Set<string>();
+                for (const b of rawBuckets) {
+                    const parsed = parseBucket(b, id, palette.color);
+                    if (!parsed) continue;
+                    const dedupeKey = `${parsed.windowKey}:${parsed.label}`;
+                    if (seen.has(dedupeKey)) continue;
+                    seen.add(dedupeKey);
+                    parsedBuckets.push(parsed);
                 }
-            }
+
+                if (parsedBuckets.length === 0) return;
+
+                parsedBuckets.sort((a, b) => windowOrder[a.windowKey || 'other'] - windowOrder[b.windowKey || 'other']);
+
+                groups.push({
+                    id,
+                    title,
+                    color: palette.color,
+                    gradientStart: palette.gradientStart,
+                    quotas: parsedBuckets
+                });
+            });
         }
 
-        // Fallback if summary was empty
-        if (quotas.length === 0) {
-            const modelConfigs: any[] = user?.cascadeModelConfigData?.clientModelConfigs || [];
-            const extractGroupQuota = (groupId: 'g1' | 'g2' | 'g3' | 'g4', filterFn: (m: any) => boolean, defaultColor: string): QuotaInfo[] => {
-                const configs = modelConfigs.filter(m => m.quotaInfo && filterFn(m));
-                if (configs.length === 0) return [];
+        // Fallback when summary groups are empty: group clientModelConfigs by shared quota
+        if (groups.length === 0) {
+            const modelConfigs: any[] = (user?.cascadeModelConfigData?.clientModelConfigs || [])
+                .filter((m: any) => Boolean(m?.quotaInfo) && !m?.disabled);
+            const sharedMap = new Map<string, { configs: any[]; explicitTitle?: string }>();
 
+            for (const m of modelConfigs) {
+                const qInfo = m.quotaInfo;
+                const modelId = m.modelId || m.modelOrAlias?.model || '';
+                const explicitGroup = m.quotaGroupId || m.quotaGroup || qInfo.groupId || qInfo.bucketId;
+                let key: string;
+                let explicitTitle: string | undefined;
+
+                if (explicitGroup) {
+                    key = `explicit:${String(explicitGroup)}`;
+                    explicitTitle = m.quotaGroupName || qInfo.groupName || undefined;
+                } else if (qInfo.resetTime && qInfo.resetTime !== 'Ready') {
+                    const isoReset = normalizeResetTime(qInfo.resetTime);
+                    key = `reset:${isoReset}|${qInfo.remainingFraction ?? 'none'}`;
+                } else {
+                    const ident = `${m.label || ''} ${modelId}`;
+                    if (/gemini/i.test(ident)) {
+                        key = 'family:gemini';
+                        explicitTitle = 'Gemini Models';
+                    } else if (/claude|gpt|openai|anthropic/i.test(ident)) {
+                        key = 'family:claude-gpt';
+                        explicitTitle = 'Claude and GPT models';
+                    } else {
+                        const fallbackTitle = String(m.label || modelId || 'Other Models').trim();
+                        key = `model:${fallbackTitle.toLowerCase()}`;
+                        explicitTitle = fallbackTitle;
+                    }
+                }
+
+                const existing = sharedMap.get(key);
+                if (existing) {
+                    existing.configs.push(m);
+                    if (!existing.explicitTitle && explicitTitle) existing.explicitTitle = explicitTitle;
+                } else {
+                    sharedMap.set(key, { configs: [m], explicitTitle });
+                }
+            }
+
+            for (const { configs, explicitTitle } of sharedMap.values()) {
+                let title = explicitTitle;
+
+                if (!title) {
+                    const idents = configs.map(c => `${c.label || ''} ${c.modelId || c.modelOrAlias?.model || ''}`);
+                    const allGemini = idents.every(s => /gemini/i.test(s));
+                    const allClaudeGpt = idents.every(s => /claude|gpt|openai|anthropic/i.test(s));
+                    if (allGemini) {
+                        title = 'Gemini Models';
+                    } else if (allClaudeGpt) {
+                        title = 'Claude and GPT models';
+                    } else {
+                        const distinctLabels = Array.from(
+                            new Set(configs.map(c => String(c.label || c.modelId || c.modelOrAlias?.model || '').trim()).filter(Boolean))
+                        );
+                        title = distinctLabels.slice(0, 2).join(' & ') || `Quota Group ${groups.length + 1}`;
+                    }
+                }
+
+                const palette = getAntigravityGroupPalette(title, groups.length);
+                const id = slugifyGroupId(title, groups.length);
                 const primaryConfig = configs[0];
                 const qInfo = primaryConfig.quotaInfo;
-                const remaining = Math.round((qInfo.remainingFraction || 0) * 100);
+                const remaining = Math.max(0, Math.min(100, Math.round(Number(qInfo.remainingFraction || 0) * 100)));
+                const resetTimeStr = normalizeResetTime(qInfo.resetTime);
 
-                let resetTimeStr = 'Ready';
-                if (qInfo.resetTime && qInfo.resetTime !== 'Ready') {
-                    try {
-                        const resetDate = new Date(qInfo.resetTime);
-                        if (!isNaN(resetDate.getTime())) {
-                            resetTimeStr = resetDate.toLocaleString();
-                        }
-                    } catch {
-                        resetTimeStr = qInfo.resetTime;
-                    }
-                }
-
-                return [{
-                    label: '5-Hour Session',
-                    remaining,
-                    resetTime: resetTimeStr,
-                    absResetTime: '',
-                    themeColor: defaultColor,
-                    displayValue: `${remaining}%`,
-                    style: 'fluid',
-                    direction: 'down',
-                    groupId
-                }];
-            };
-
-            const flashQuotas = extractGroupQuota('g2', m => (m.label?.includes('Flash') || m.modelId?.includes('flash')) && !m.label?.includes('Argon'), '#38bdf8');
-            const claudeGptQuotas = extractGroupQuota('g3', m => (m.label?.includes('Claude') || m.label?.includes('GPT') || m.modelId?.includes('claude') || m.modelId?.includes('gpt')), '#38bdf8');
-            const argonQuotas = extractGroupQuota('g4', m => (m.label?.includes('Argon') || m.modelId?.includes('argon')), '#c084fc');
-
-            quotas = [...flashQuotas, ...claudeGptQuotas, ...argonQuotas];
+                groups.push({
+                    id,
+                    title,
+                    color: palette.color,
+                    gradientStart: palette.gradientStart,
+                    quotas: [{
+                        label: '5-Hour Session',
+                        remaining,
+                        resetTime: resetTimeStr,
+                        absResetTime: '',
+                        themeColor: palette.color,
+                        displayValue: `${remaining}%`,
+                        style: 'fluid',
+                        direction: 'down',
+                        groupId: id,
+                        windowKey: '5h'
+                    }]
+                });
+            }
         }
 
+        const quotas: QuotaInfo[] = groups.flatMap(g => g.quotas);
+
         return {
-            name: user?.name || 'User',
+            name: user?.name || '',
             email: user?.email || '',
-            tier: user?.userTier?.name || user?.planStatus?.planInfo?.planName || 'Free',
+            tier: user?.userTier?.name || user?.planStatus?.planInfo?.planName || user?.planStatus?.planInfo?.teamsTier || '',
+            groups,
             quotas
         };
     }
 
-    // ─── [ADDED] Combined dashboard fetch ────────────────────────────────────
-    async fetchDashboard(): Promise<DashboardData> {
+    async fetchDashboard(forceRediscover: boolean = false): Promise<DashboardData> {
         const [antigravity, codexResult, claude] = await Promise.all([
-            this.fetchStatus(),
+            this.fetchStatus(forceRediscover),
             getCodexRateLimitData(),
             this.claudeQuotaManager.fetchClaudeQuota()
         ]);
 
         return {
             antigravity,
+            antigravityError: antigravity ? null : (this.lastError || 'noServer'),
             codex: codexResult.found ? codexResult.data : null,
             claude
         };

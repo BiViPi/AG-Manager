@@ -1,5 +1,12 @@
 # Changelog - Antigravity-Codex-Claude Monitor
 
+## [1.7.0] - 2026-11-24
+- Added Antigravity IDE 2.6.0+ (`agy --hub`) discovery and dynamic shared-quota grouping.
+- Added real-time reset countdown timers on the Status Bar.
+- Redesigned the hover popup into a seamless single-card dark layout with semantic quota health indicators.
+- Replaced the language selector with a custom dark `EN`/`VI` dropdown and completed `EN`/`VI` localization.
+- Added a dedicated `AG Manager` Output Channel for diagnostics and removed legacy hardcoded labels.
+
 ## [1.6.0] - 2026-10-26
 - Added dedicated quota tracking for Gemini 4 Argon.
 - Updated model telemetry for Gemini 3.8 Flash and Claude 5.5.
